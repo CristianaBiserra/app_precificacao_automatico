@@ -1,7 +1,9 @@
 import os
 import re
 import csv
+import json
 import unicodedata
+from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -163,56 +165,190 @@ class UniversalBudgetReader:
         "ncm": ["ncm", "ncmsh", "codigoncm", "classfiscal", "classificacaofiscal", "classificaçãofiscal"],
         "ipi": ["ipi", "aliquotaipi", "percipi", "percentualipi"],
         "icms": ["icms", "aliquotaicms", "percicms", "percentualicms"],
-        "frete": ["frete", "tipofrete", "modofrete", "fobcif", "ciffob"],
-        "preco": ["preco", "preço", "precounitario", "preçounitário", "valorunitario", "vlunitario", "valor", "unitario", "unitário", "preco rsun"],
+        "frete": ["frete", "tipofrete", "modofrete", "fobcif", "ciffob", "tipo frete"],
+        "preco": ["preco", "preço", "precounitario", "preçounitário", "valorunitario", "vlunitario", "valor", "unitario", "unitário", "preco rsun", "valorunitario", "valor unitario"],
         "codigo": ["codigo", "código", "cod", "referencia", "referência"],
-        "qtde": ["qtde", "quantidade", "qtd"],
+        "qtde": ["qtde", "quantidade", "qtd", "qt"],
     }
 
-    def read(self, filepath: str):
+    def __init__(self):
+        self.diagnostics = []
+        self.last_strategy = ""
+        self.learning_enabled = True
+        self.learning_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orcamento_learning_db.json")
+        self.learning_db = self._load_learning_db()
+
+    def _load_learning_db(self):
+        if not os.path.exists(self.learning_db_path):
+            return {"profiles": {}}
+        try:
+            with open(self.learning_db_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return {"profiles": {}}
+            data.setdefault("profiles", {})
+            return data
+        except Exception:
+            return {"profiles": {}}
+
+    def _save_learning_db(self):
+        try:
+            with open(self.learning_db_path, "w", encoding="utf-8") as f:
+                json.dump(self.learning_db, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self._log(f"Falha ao salvar base de aprendizado: {e}")
+
+    def reset_diagnostics(self):
+        self.diagnostics = []
+        self.last_strategy = ""
+
+    def _log(self, message: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.diagnostics.append(f"[{ts}] {message}")
+
+    def get_diagnostics_text(self):
+        if not self.diagnostics:
+            return "Nenhum diagnóstico disponível."
+        return "\n".join(self.diagnostics)
+
+    def _extract_cnpjs(self, text_dump: str):
+        nums = re.sub(r"\D", "", text_dump)
+        return list(dict.fromkeys(re.findall(r"\d{14}", nums)))
+
+    def _guess_supplier_name(self, text_dump: str, filepath: str = ""):
+        lines = [re.sub(r"\s+", " ", ln).strip() for ln in text_dump.splitlines() if ln.strip()]
+        ranked = []
+        for line in lines[:80] + lines[-40:]:
+            norm = strip_accents(line).upper()
+            if any(term in norm for term in [" LTDA", " S/A", " EIRELI", " COMERCIO", " DISTRIBUIDORA", " INDUSTRIA", " IND.", " CABOS", " SOLUCOES", " TECNOLOGIA"]):
+                if "KGMLAN" in norm or CNPJ_RN_DIGITS in re.sub(r"\D", "", norm) or CNPJ_PE_DIGITS in re.sub(r"\D", "", norm):
+                    continue
+                ranked.append(line[:90])
+        if ranked:
+            return ranked[0]
+        if filepath:
+            return os.path.splitext(os.path.basename(filepath))[0]
+        return "layout_desconhecido"
+
+    def _profile_key(self, text_dump: str, filepath: str = ""):
+        supplier = normalize_text(self._guess_supplier_name(text_dump, filepath))[:80] or "layout_desconhecido"
+        cnpjs = self._extract_cnpjs(text_dump)
+        issuer = ""
+        for cnpj in cnpjs:
+            if cnpj not in (CNPJ_RN_DIGITS, CNPJ_PE_DIGITS):
+                issuer = cnpj
+                break
+        return f"{supplier}__{issuer}" if issuer else supplier
+
+    def _learn_layout(self, filepath: str, text_dump: str, items, strategy: str):
+        if not self.learning_enabled:
+            self._log("Aprendizado desativado para esta leitura.")
+            return
+        key = self._profile_key(text_dump, filepath)
+        supplier = self._guess_supplier_name(text_dump, filepath)
+        profile = self.learning_db.setdefault("profiles", {}).setdefault(key, {
+            "supplier_name": supplier,
+            "first_seen": datetime.now().isoformat(timespec="seconds"),
+            "successful_reads": 0,
+            "strategies": {},
+            "sample_headers": [],
+            "known_cnpjs": [],
+        })
+        profile["last_seen"] = datetime.now().isoformat(timespec="seconds")
+        profile["successful_reads"] = int(profile.get("successful_reads", 0)) + 1
+        profile.setdefault("strategies", {})
+        profile["strategies"][strategy] = int(profile["strategies"].get(strategy, 0)) + 1
+        profile["last_strategy"] = strategy
+        profile["last_item_count"] = len(items)
+        profile["known_cnpjs"] = list(dict.fromkeys(profile.get("known_cnpjs", []) + self._extract_cnpjs(text_dump)))[:10]
+
+        sample_headers = []
+        for line in [ln.strip() for ln in text_dump.splitlines() if ln.strip()][:40]:
+            compact = re.sub(r"\s+", " ", line)
+            if sum(1 for field in self.HEADER_ALIASES if normalize_text(field) in normalize_text(compact)) >= 1:
+                sample_headers.append(compact[:120])
+        if sample_headers:
+            existing = profile.get("sample_headers", [])
+            profile["sample_headers"] = list(dict.fromkeys(existing + sample_headers))[:20]
+
+        self.learning_db["profiles"][key] = profile
+        self._save_learning_db()
+        self._log(f"Aprendizado salvo para o layout '{supplier}' usando estratégia '{strategy}'.")
+
+    def get_learning_summary(self):
+        profiles = self.learning_db.get("profiles", {})
+        if not profiles:
+            return "Nenhum layout aprendido até o momento."
+        linhas = ["Modelos aprendidos:"]
+        for _, profile in sorted(profiles.items(), key=lambda kv: kv[1].get("last_seen", ""), reverse=True)[:20]:
+            linhas.append(f"- {profile.get('supplier_name', 'layout')} | leituras: {profile.get('successful_reads', 0)} | última estratégia: {profile.get('last_strategy', '-')}")
+        return "\n".join(linhas)
+
+    def read(self, filepath: str, learning_enabled: bool = True):
+        self.reset_diagnostics()
+        self.learning_enabled = learning_enabled
         ext = os.path.splitext(filepath)[1].lower()
+        self._log(f"Iniciando leitura do arquivo: {os.path.basename(filepath)}")
+        self._log(f"Extensão detectada: {ext}")
         if ext in (".xlsx", ".xlsm"):
-            return self._read_excel(filepath)
-        if ext == ".csv":
-            return self._read_csv(filepath)
-        if ext == ".pdf":
-            return self._read_pdf(filepath)
-        if ext in (".png", ".jpg", ".jpeg"):
-            return self._read_image(filepath)
-        raise ValueError("Formato nao suportado. Use PDF, XLSX, XLSM, CSV, PNG, JPG ou JPEG.")
+            data = self._read_excel(filepath)
+        elif ext == ".csv":
+            data = self._read_csv(filepath)
+        elif ext == ".pdf":
+            data = self._read_pdf(filepath)
+        elif ext in (".png", ".jpg", ".jpeg"):
+            data = self._read_image(filepath)
+        else:
+            raise ValueError("Formato nao suportado. Use PDF, XLSX, XLSM, CSV, PNG, JPG ou JPEG.")
+
+        data["diagnostics_text"] = self.get_diagnostics_text()
+        data["learning_summary"] = self.get_learning_summary()
+        return data
 
     def _detect_cnpj_and_mode(self, text_dump: str):
         texto_numeros = re.sub(r"\D", "", text_dump)
         cnpjs = re.findall(r"\d{14}", texto_numeros)
+        self._log(f"CNPJs encontrados no texto: {len(cnpjs)}")
         for cnpj in cnpjs:
             cnpj_formatado = f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
             if cnpj == CNPJ_RN_DIGITS or cnpj.endswith("000405"):
+                self._log(f"CNPJ de destino reconhecido como RN: {cnpj_formatado}")
                 return cnpj_formatado, "RN"
             if cnpj == CNPJ_PE_DIGITS or cnpj.endswith("000154"):
+                self._log(f"CNPJ de destino reconhecido como PE: {cnpj_formatado}")
                 return cnpj_formatado, "PE"
         upper = text_dump.upper()
         if "KGMLAN" in upper or "KGM LAN" in upper:
+            self._log("Nome KGMLAN detectado sem CNPJ explícito. Assumindo RN.")
             return CNPJ_RN, "RN"
+        self._log("Não foi possível identificar automaticamente RN/PE pelo CNPJ.")
         return "", ""
 
     def _detect_frete(self, text_dump: str):
         upper = strip_accents(text_dump).upper()
-        compact = re.sub(r"[^A-Z0-9]+", " ", upper)
         explicit_tipo = re.search(r"TIPO\s+FRETE\s+([A-Z\.]+)", upper)
         if explicit_tipo:
             valor = re.sub(r"[^A-Z]", "", explicit_tipo.group(1))
             if valor == "FOB":
+                self._log("Frete identificado pela expressão 'TIPO FRETE': FOB")
                 return "FOB"
             if valor == "CIF":
+                self._log("Frete identificado pela expressão 'TIPO FRETE': CIF")
                 return "CIF"
-        if re.search(r"C\.?I\.?F\.?", upper):
+        if re.search(r"\bC\.?I\.?F\.?\b", upper):
+            self._log("Frete identificado como CIF.")
             return "CIF"
-        if re.search(r"F\.?O\.?B\.?", upper):
+        if re.search(r"\bF\.?O\.?B\.?\b", upper):
+            self._log("Frete identificado como FOB.")
             return "FOB"
+        compact = re.sub(r"[^A-Z0-9]+", " ", upper)
         if "FRETE CIF" in compact:
+            self._log("Frete identificado pelo texto compacto: CIF")
             return "CIF"
         if "FRETE FOB" in compact:
+            self._log("Frete identificado pelo texto compacto: FOB")
             return "FOB"
+        self._log("Frete não identificado com clareza. Assumindo CIF como padrão.")
         return "CIF"
 
     def _safe_decimal(self, value, default="0"):
@@ -223,14 +359,22 @@ class UniversalBudgetReader:
 
     def _extract_default_tax_rates(self, text_dump: str):
         txt = strip_accents(text_dump).upper()
-
         total_produtos = None
         total_ipi = None
         total_icms = None
 
-        m_prod = re.search(r"VALOR\s+TOTAL\s+DOS\s+PRODUTOS\s*[:\-]?\s*([\d\.,]+)", txt)
-        if m_prod:
-            total_produtos = self._safe_decimal(m_prod.group(1))
+        product_patterns = [
+            r"VALOR\s+TOTAL\s+DOS\s+PRODUTOS\s*[:\-]?\s*([\d\.,]+)",
+            r"MERCADORIA\s*[:\-]?\s*([\d\.,]+)",
+            r"TOTAL\s+PRODUTOS\s*[:\-]?\s*([\d\.,]+)",
+        ]
+        for pat in product_patterns:
+            m_prod = re.search(pat, txt)
+            if m_prod:
+                total_produtos = self._safe_decimal(m_prod.group(1))
+                self._log(f"Base de produtos inferida pelo padrão '{pat}': {m_prod.group(1)}")
+                break
+
         valores_block = None
         vals = re.findall(r"VALORES?\s+DO\s+ORCAMENTO.*?([\d\.,\s]{20,})", txt, flags=re.S)
         if vals:
@@ -238,20 +382,38 @@ class UniversalBudgetReader:
             nums = re.findall(r"\d{1,3}(?:\.\d{3})*,\d{2}", valores_block)
             if (total_produtos is None or total_produtos == 0) and nums:
                 total_produtos = self._safe_decimal(nums[-2] if len(nums) >= 2 else nums[-1])
+                self._log(f"Base de produtos inferida pelo bloco 'Valores do Orçamento': {total_produtos}")
 
-        m_ipi = re.search(r"VALOR\s+DO\s+IPI\s*[:\-]?\s*([\d\.,]+)", txt)
-        if m_ipi:
-            total_ipi = self._safe_decimal(m_ipi.group(1))
-        icms_matches = re.findall(r"VALOR\s+ICMS\s*[:\-]?\s*([\d\.,]+)", txt)
+        ipi_patterns = [
+            r"VALOR\s+DO\s+IPI\s*[:\-]?\s*([\d\.,]+)",
+            r"\bIPI\s*\.?\s*[:\-]?\s*([\d\.,]+)",
+        ]
+        for pat in ipi_patterns:
+            m_ipi = re.search(pat, txt)
+            if m_ipi:
+                total_ipi = self._safe_decimal(m_ipi.group(1))
+                self._log(f"Total de IPI inferido pelo padrão '{pat}': {m_ipi.group(1)}")
+                break
+
+        icms_patterns = [
+            r"VALOR\s+ICMS\s*[:\-]?\s*([\d\.,]+)",
+            r"\bICMS\s*\.?\s*[:\-]?\s*([\d\.,]+)",
+        ]
+        icms_matches = []
+        for pat in icms_patterns:
+            icms_matches.extend(re.findall(pat, txt))
         if icms_matches:
             positivos = [self._safe_decimal(v) for v in icms_matches if self._safe_decimal(v) > 0]
             if positivos:
                 total_icms = max(positivos)
+                self._log(f"Total de ICMS inferido pelos padrões textuais: {total_icms}")
+
         if (total_icms is None or total_icms == 0) and valores_block:
             nums = [self._safe_decimal(v) for v in re.findall(r"\d{1,3}(?:\.\d{3})*,\d{2}", valores_block)]
             positivos = [n for n in nums if n > 0]
             if len(positivos) >= 2:
                 total_icms = positivos[1]
+                self._log(f"Total de ICMS inferido pelo bloco 'Valores do Orçamento': {total_icms}")
 
         icms = Decimal("0")
         ipi = Decimal("0")
@@ -260,80 +422,10 @@ class UniversalBudgetReader:
                 icms = (total_icms / total_produtos).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
             if total_ipi and total_ipi > 0:
                 ipi = (total_ipi / total_produtos).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+
+        self._log(f"Tributos padrão inferidos do orçamento -> ICMS: {format_pct(icms)}, IPI: {format_pct(ipi)}")
         return {"icms": icms, "ipi": ipi}
 
-    def _looks_like_product_description(self, text: str):
-        t = strip_accents(text).upper()
-        blocked = [
-            "ORCAMENTO", "DADOS DOS PRODUTOS", "VALORES DO ORCAMENTO", "DADOS ADICIONAIS",
-            "CLIENTE", "ENDERECO", "CNPJ", "TELEFONE", "PAGAMENTO", "EMBARQUE",
-            "VALOR TOTAL", "BASE DE CALCULO", "PEDIDO MINIMO", "APROVACAO", "OBSERVACAO"
-        ]
-        if any(b in t for b in blocked):
-            return False
-        return bool(re.search(r"[A-Z]", t))
-
-    def _extract_items_from_text_dump(self, text_dump: str):
-        default_taxes = self._extract_default_tax_rates(text_dump)
-        default_frete = self._detect_frete(text_dump)
-        lines = [re.sub(r"\s+", " ", ln).strip() for ln in text_dump.splitlines() if ln.strip()]
-        found = []
-
-        row_patterns = [
-            re.compile(r"^(?P<idx>\d{1,3})\s+(?P<codigo>[A-Z0-9\-]{2,})\s+(?P<descricao>.+?)\s+(?P<qtde>\d+)\s+(?P<un>[A-Z]{2,4})\s+(?P<preco>\d{1,3}(?:\.\d{3})*,\d{2,4})\s+(?P<total>\d{1,3}(?:\.\d{3})*,\d{2})\s+(?P<ipi>\d{1,2}(?:,\d{1,2})?)\s+(?P<mva>\d{1,2}(?:,\d{1,2})?)\s+(?P<ncm>\d{8})$"),
-            re.compile(r"^(?P<codigo>[A-Z0-9\-]{2,})\s+(?P<descricao>.+?)\s+(?P<qtde>\d+)\s+(?P<preco>\d{1,3}(?:\.\d{3})*,\d{2,4})\s+(?P<total>\d{1,3}(?:\.\d{3})*,\d{2})\s+(?P<icms>\d{1,2}(?:,\d{1,2})?)\s+(?P<ipi>\d{1,2}(?:,\d{1,2})?)\s+(?P<ncm>\d{8})$"),
-        ]
-
-        for line in lines:
-            for pattern in row_patterns:
-                m = pattern.match(line)
-                if not m:
-                    continue
-                gd = m.groupdict()
-                found.append({
-                    "codigo": gd.get("codigo", ""),
-                    "descricao": gd.get("descricao", "").strip(" -"),
-                    "qtde": gd.get("qtde", "1"),
-                    "preco": gd.get("preco", "0"),
-                    "ncm": gd.get("ncm", ""),
-                    "icms": gd.get("icms") or default_taxes["icms"],
-                    "ipi": gd.get("ipi") or default_taxes["ipi"],
-                    "frete": default_frete,
-                })
-                break
-
-        if found:
-            return found
-
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            nums = re.findall(r"\d{1,3}(?:\.\d{3})*,\d{2,4}|\d{8}", line)
-            if len(nums) >= 4 and any(len(n) == 8 and n.isdigit() for n in nums):
-                ncm_match = re.search(r"(\d{8})\s*$", line)
-                qtd_match = re.search(r"\s(\d+)\s+[A-Z]{2,4}\s+\d{1,3}(?:\.\d{3})*,\d{2,4}", line)
-                codigo_match = re.match(r"^(?:\d{1,3}\s+)?([A-Z0-9\-]{2,})\s+", line)
-                if ncm_match and qtd_match and codigo_match:
-                    ncm = ncm_match.group(1)
-                    qtd = qtd_match.group(1)
-                    codigo = codigo_match.group(1)
-                    preco_candidates = re.findall(r"\d{1,3}(?:\.\d{3})*,\d{2,4}", line)
-                    preco = preco_candidates[0] if preco_candidates else "0"
-                    desc_part = re.sub(r"^(?:\d{1,3}\s+)?" + re.escape(codigo) + r"\s+", "", line)
-                    desc_part = re.sub(r"\s+" + re.escape(qtd) + r"\s+[A-Z]{2,4}.*$", "", desc_part).strip()
-                    if self._looks_like_product_description(desc_part):
-                        found.append({
-                            "codigo": codigo,
-                            "descricao": desc_part,
-                            "qtde": qtd,
-                            "preco": preco,
-                            "ncm": ncm,
-                            "icms": default_taxes["icms"],
-                            "ipi": default_taxes["ipi"],
-                            "frete": default_frete,
-                        })
-            i += 1
-        return found
 
     def _match_header(self, value):
         normalized = normalize_text(value)
@@ -342,6 +434,12 @@ class UniversalBudgetReader:
                 if normalize_text(alias) == normalized:
                     return field
         return None
+
+    def _merge_learned_aliases(self, profile_key: str):
+        profile = self.learning_db.get("profiles", {}).get(profile_key)
+        if not profile:
+            return
+        self._log(f"Perfil aprendido carregado para '{profile.get('supplier_name', profile_key)}'.")
 
     def _dedupe_items(self, items):
         deduped = []
@@ -355,6 +453,7 @@ class UniversalBudgetReader:
                 str(item.get("qtde", "")),
             )
             if key in seen:
+                self._log(f"Item duplicado descartado: {item.get('descricao', '')[:60]}")
                 continue
             seen.add(key)
             deduped.append(item)
@@ -368,9 +467,15 @@ class UniversalBudgetReader:
             preco = to_decimal(item.get("preco", ""))
             qtde_dec = to_decimal(item.get("qtde", "1"))
             qtde = int(qtde_dec) if qtde_dec > 0 else 1
-            if qtde <= 0 or preco <= 0:
-                continue
+            motivos = []
+            if qtde <= 0:
+                motivos.append("quantidade <= 0")
+            if preco <= 0:
+                motivos.append("preço <= 0")
             if not desc and not ncm:
+                motivos.append("sem descrição e sem NCM")
+            if motivos:
+                self._log(f"Item descartado no pós-processamento: {', '.join(motivos)}")
                 continue
             processed.append({
                 "codigo": str(item.get("codigo", "")).strip(),
@@ -382,10 +487,12 @@ class UniversalBudgetReader:
                 "preco": preco,
                 "qtde": qtde,
             })
+        self._log(f"Itens válidos após pós-processamento: {len(processed)}")
         return processed
 
-    def _extract_from_tabular_rows(self, rows, text_dump):
+    def _extract_from_tabular_rows(self, rows, text_dump, context="tabela"):
         found_items = []
+        detected_headers = {}
         for idx, row in enumerate(rows[:30]):
             current_map = {}
             for col_idx, val in enumerate(row):
@@ -394,7 +501,10 @@ class UniversalBudgetReader:
                 matched = self._match_header(val)
                 if matched:
                     current_map[matched] = col_idx
+            if current_map:
+                detected_headers = current_map
             if ("descricao" in current_map and "ncm" in current_map and "preco" in current_map and "qtde" in current_map):
+                self._log(f"Cabeçalhos reconhecidos em {context}: {sorted(current_map.keys())}")
                 for data_row in rows[idx + 1:]:
                     if not any(v not in (None, "") for v in data_row):
                         continue
@@ -405,7 +515,14 @@ class UniversalBudgetReader:
                     found_items.append(item)
                 break
         if found_items:
+            self.last_strategy = "headers_tabulares"
+            self._log(f"Extração tabular encontrou {len(found_items)} item(ns).")
             return found_items
+
+        if detected_headers:
+            self._log(f"Cabeçalhos parciais encontrados em {context}, mas insuficientes: {sorted(detected_headers.keys())}")
+        else:
+            self._log(f"Nenhum cabeçalho estruturado útil encontrado em {context}.")
 
         lines = [ln.strip() for ln in text_dump.splitlines() if ln.strip()]
         generic_items = []
@@ -437,11 +554,156 @@ class UniversalBudgetReader:
                         })
                         i = j
             i += 1
+        if generic_items:
+            self.last_strategy = "fallback_linhas_genericas"
+            self._log(f"Fallback por linhas genéricas encontrou {len(generic_items)} item(ns).")
+        else:
+            self._log("Fallback por linhas genéricas não encontrou itens.")
         return generic_items
+
+    def _extract_items_from_text_dump(self, text_dump):
+        default_taxes = self._extract_default_tax_rates(text_dump)
+        default_frete = self._detect_frete(text_dump)
+        lines = [re.sub(r"\s+", " ", ln).strip() for ln in text_dump.splitlines() if ln.strip()]
+        found = []
+
+        row_patterns = [
+            ("linha_compacta_completa", re.compile(r"^(?P<idx>\d{1,3})\s+(?P<codigo>[A-Z0-9\-]{2,})\s+(?P<descricao>.+?)\s+(?P<qtde>\d+)\s+(?P<un>[A-Z]{2,4})\s+(?P<preco>\d{1,3}(?:\.\d{3})*,\d{2,4})\s+(?P<total>\d{1,3}(?:\.\d{3})*,\d{2})\s+(?P<ipi>\d{1,2}(?:,\d{1,2})?)\s+(?P<mva>\d{1,2}(?:,\d{1,2})?)\s+(?P<ncm>\d{8})$")),
+            ("linha_compacta_icms_ipi", re.compile(r"^(?P<codigo>[A-Z0-9\-]{2,})\s+(?P<descricao>.+?)\s+(?P<qtde>\d+)\s+(?P<preco>\d{1,3}(?:\.\d{3})*,\d{2,4})\s+(?P<total>\d{1,3}(?:\.\d{3})*,\d{2})\s+(?P<icms>\d{1,2}(?:,\d{1,2})?)\s+(?P<ipi>\d{1,2}(?:,\d{1,2})?)\s+(?P<ncm>\d{8})$")),
+            ("linha_megatron_unica", re.compile(r"^(?P<codigo>[A-Z0-9\-]{6,})\s+(?:\((?P<codigo_alt>[^\)]+)\)\s+)?(?P<qtde>\d{1,3}(?:\.\d{3})*(?:,\d+)?)\s+(?P<un>[A-Z]{2,4})\s+(?P<descricao>.+?)\s+(?P<metragem>\d{1,3}(?:\.\d{3})*,\d{2})\s+[A-Z]{1,3}\s+(?P<preco>\d{1,3}(?:\.\d{3})*,\d{4})\s+(?P<mercadoria>\d{1,3}(?:\.\d{3})*,\d{2})\s+(?P<st>\d{1,3}(?:\.\d{3})*,\d{2})\s+(?P<ipi_valor>\d{1,3}(?:\.\d{3})*,\d{2})\s+(?P<total>\d{1,3}(?:\.\d{3})*,\d{2})$")),
+        ]
+
+        for line in lines:
+            for strategy_name, pattern in row_patterns:
+                m = pattern.match(line)
+                if not m:
+                    continue
+                gd = m.groupdict()
+                found.append({
+                    "codigo": gd.get("codigo", ""),
+                    "descricao": gd.get("descricao", "").strip(" -"),
+                    "qtde": gd.get("qtde", "1"),
+                    "preco": gd.get("preco", "0"),
+                    "ncm": gd.get("ncm", ""),
+                    "icms": gd.get("icms") or default_taxes["icms"],
+                    "ipi": gd.get("ipi") or default_taxes["ipi"],
+                    "frete": default_frete,
+                })
+                self.last_strategy = strategy_name
+                break
+
+        if found:
+            self._log(f"Extração por padrões de linha encontrou {len(found)} item(ns) com estratégia '{self.last_strategy}'.")
+            return found
+
+        detail_pattern = re.compile(r"^(?P<qtde>\d{1,3}(?:\.\d{3})*(?:,\d+)?)\s+(?P<un>[A-Z]{2,4})\s+(?P<descricao>.+?)\s+(?P<metragem>\d{1,3}(?:\.\d{3})*,\d{2})\s+[A-Z]{1,3}\s+(?P<preco>\d{1,3}(?:\.\d{3})*,\d{4})\s+(?P<mercadoria>\d{1,3}(?:\.\d{3})*,\d{2})\s+(?P<st>\d{1,3}(?:\.\d{3})*,\d{2})\s+(?P<ipi_valor>\d{1,3}(?:\.\d{3})*,\d{2})\s+(?P<total>\d{1,3}(?:\.\d{3})*,\d{2})$")
+        for i in range(len(lines) - 1):
+            codigo = ""
+            detail_line = ""
+            search_start = i + 1
+
+            if re.match(r"^[A-Z0-9\-]{6,}$", lines[i]):
+                codigo = lines[i]
+                if i + 2 < len(lines) and re.match(r"^\([^\)]+\)$", lines[i + 1]):
+                    detail_line = lines[i + 2]
+                    search_start = i + 3
+                else:
+                    detail_line = lines[i + 1]
+                    search_start = i + 2
+            elif re.match(r"^[A-Z0-9\-]{6,}\s+\([^\)]+\)$", lines[i]):
+                codigo = lines[i].split()[0]
+                detail_line = lines[i + 1]
+                search_start = i + 2
+            else:
+                continue
+
+            m = detail_pattern.match(detail_line)
+            if not m:
+                continue
+
+            gd = m.groupdict()
+            trailing_ncm = ""
+            for extra in lines[search_start:search_start + 4]:
+                m_ncm = re.search(r"\b(\d{8})\b", extra)
+                if m_ncm:
+                    trailing_ncm = m_ncm.group(1)
+                    break
+
+            found.append({
+                "codigo": codigo,
+                "descricao": gd.get("descricao", "").strip(" -"),
+                "qtde": gd.get("qtde", "1"),
+                "preco": gd.get("preco", "0"),
+                "ncm": trailing_ncm,
+                "icms": default_taxes["icms"],
+                "ipi": default_taxes["ipi"],
+                "frete": default_frete,
+            })
+            self.last_strategy = "linha_megatron_multilinha"
+
+        if found:
+            self._log(f"Extração multilinha encontrou {len(found)} item(ns) com estratégia '{self.last_strategy}'.")
+            return found
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            nums = re.findall(r"\d{1,3}(?:\.\d{3})*,\d{2,4}|\b\d{8}\b", line)
+            if len(nums) >= 4 and any(len(n) == 8 and n.isdigit() for n in nums):
+                ncm_match = re.search(r"(\d{8})\s*$", line)
+                qtd_match = re.search(r"\s(\d+)\s+[A-Z]{2,4}\s+\d{1,3}(?:\.\d{3})*,\d{2,4}", line)
+                codigo_match = re.match(r"^(?:\d{1,3}\s+)?([A-Z0-9\-]{2,})\s+", line)
+                if ncm_match and qtd_match and codigo_match:
+                    ncm = ncm_match.group(1)
+                    qtd = qtd_match.group(1)
+                    codigo = codigo_match.group(1)
+                    preco_candidates = re.findall(r"\d{1,3}(?:\.\d{3})*,\d{2,4}", line)
+                    preco = preco_candidates[0] if preco_candidates else "0"
+                    desc_part = re.sub(r"^(?:\d{1,3}\s+)?" + re.escape(codigo) + r"\s+", "", line)
+                    desc_part = re.sub(r"\s+" + re.escape(qtd) + r"\s+[A-Z]{2,4}.*$", "", desc_part).strip()
+                    if self._looks_like_product_description(desc_part):
+                        found.append({
+                            "codigo": codigo,
+                            "descricao": desc_part,
+                            "qtde": qtd,
+                            "preco": preco,
+                            "ncm": ncm,
+                            "icms": default_taxes["icms"],
+                            "ipi": default_taxes["ipi"],
+                            "frete": default_frete,
+                        })
+            i += 1
+
+        if found:
+            self.last_strategy = "heuristica_texto_livre"
+            self._log(f"Heurística de texto livre encontrou {len(found)} item(ns).")
+        else:
+            self._log("Heurística de texto livre não encontrou itens.")
+        return found
+
+
+    def _finalize_result(self, filepath: str, text_dump: str, found_items, cnpj, compra_para, frete, source_type: str):
+        processed = self._post_process_items(found_items, frete)
+        strategy = self.last_strategy or "nao_definida"
+        if processed:
+            self._log(f"Leitura concluída com sucesso usando estratégia '{strategy}'.")
+            self._learn_layout(filepath, text_dump, processed, strategy)
+        else:
+            self._log("Leitura concluída sem itens válidos. Verifique o diagnóstico para entender o motivo.")
+        return {
+            "cnpj": cnpj,
+            "compra_para": compra_para,
+            "frete": frete,
+            "items": processed,
+            "source_type": source_type,
+            "strategy": strategy,
+            "supplier_name": self._guess_supplier_name(text_dump, filepath),
+        }
 
     def _read_excel(self, filepath: str):
         wb = openpyxl.load_workbook(filepath, data_only=True)
         text_parts, found_items = [], []
+        self._log(f"Lendo workbook com {len(wb.worksheets)} aba(s).")
         for ws in wb.worksheets:
             rows = list(ws.iter_rows(values_only=True))
             sheet_text = []
@@ -450,20 +712,28 @@ class UniversalBudgetReader:
                 if row_text:
                     sheet_text.append(row_text)
                     text_parts.append(row_text)
-            found_items.extend(self._extract_from_tabular_rows(rows, "\n".join(sheet_text)))
+            found_items.extend(self._extract_from_tabular_rows(rows, "\n".join(sheet_text), context=f"aba {ws.title}"))
         text_dump = "\n".join(text_parts)
+        profile_key = self._profile_key(text_dump, filepath)
+        self._merge_learned_aliases(profile_key)
+        if not found_items:
+            found_items.extend(self._extract_items_from_text_dump(text_dump))
         cnpj, compra_para = self._detect_cnpj_and_mode(text_dump)
         frete = self._detect_frete(text_dump)
-        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": self._post_process_items(found_items, frete)}
+        return self._finalize_result(filepath, text_dump, found_items, cnpj, compra_para, frete, "excel")
 
     def _read_csv(self, filepath: str):
         with open(filepath, "r", encoding="utf-8-sig", newline="") as f:
             rows = list(csv.reader(f))
         text_dump = "\n".join([" ".join([str(v) for v in row if v not in (None, "")]) for row in rows])
-        found_items = self._extract_from_tabular_rows(rows, text_dump)
+        profile_key = self._profile_key(text_dump, filepath)
+        self._merge_learned_aliases(profile_key)
+        found_items = self._extract_from_tabular_rows(rows, text_dump, context="csv")
+        if not found_items:
+            found_items.extend(self._extract_items_from_text_dump(text_dump))
         cnpj, compra_para = self._detect_cnpj_and_mode(text_dump)
         frete = self._detect_frete(text_dump)
-        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": self._post_process_items(found_items, frete)}
+        return self._finalize_result(filepath, text_dump, found_items, cnpj, compra_para, frete, "csv")
 
     def _read_pdf(self, filepath: str):
         try:
@@ -472,23 +742,25 @@ class UniversalBudgetReader:
             raise ImportError("Para ler PDF, instale pdfplumber: python -m pip install pdfplumber")
         text_parts, found_items = [], []
         with pdfplumber.open(filepath) as pdf:
-            for page in pdf.pages:
+            self._log(f"PDF com {len(pdf.pages)} página(s).")
+            for page_number, page in enumerate(pdf.pages, start=1):
                 text = page.extract_text() or ""
-                if text:
-                    text_parts.append(text)
+                text_parts.append(text)
+                self._log(f"Página {page_number}: {len(text.splitlines())} linha(s) de texto extraídas.")
                 tables = page.extract_tables() or []
-                for table in tables:
+                self._log(f"Página {page_number}: {len(tables)} tabela(s) detectada(s).")
+                for table_idx, table in enumerate(tables, start=1):
                     if table:
-                        found_items.extend(self._extract_from_tabular_rows(table, text))
-                if text:
-                    found_items.extend(self._extract_items_from_text_dump(text))
+                        found_items.extend(self._extract_from_tabular_rows(table, text, context=f"pdf página {page_number} tabela {table_idx}"))
         text_dump = "\n".join(text_parts)
+        profile_key = self._profile_key(text_dump, filepath)
+        self._merge_learned_aliases(profile_key)
+        if not found_items:
+            self._log("Partindo para fallback textual do PDF.")
+            found_items.extend(self._extract_items_from_text_dump(text_dump))
         cnpj, compra_para = self._detect_cnpj_and_mode(text_dump)
         frete = self._detect_frete(text_dump)
-        items = self._post_process_items(found_items, frete)
-        if not items and text_dump:
-            items = self._post_process_items(self._extract_items_from_text_dump(text_dump), frete)
-        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": items}
+        return self._finalize_result(filepath, text_dump, found_items, cnpj, compra_para, frete, "pdf")
 
     def _read_image(self, filepath: str):
         try:
@@ -498,38 +770,44 @@ class UniversalBudgetReader:
             raise ImportError("Para ler imagem, instale Pillow e pytesseract, alem do Tesseract OCR no Windows.")
         image = Image.open(filepath)
         text_dump = pytesseract.image_to_string(image, lang="por+eng", config="--psm 6")
+        self._log(f"OCR executado na imagem com {len(text_dump.splitlines())} linha(s) reconhecidas.")
+        profile_key = self._profile_key(text_dump, filepath)
+        self._merge_learned_aliases(profile_key)
         cnpj, compra_para = self._detect_cnpj_and_mode(text_dump)
         frete = self._detect_frete(text_dump)
-        lines = [ln.strip() for ln in text_dump.splitlines() if ln.strip()]
-        found_items = []
-        current = {"codigo": "", "descricao": "", "ncm": "", "icms": "", "ipi": "", "preco": "", "frete": frete, "qtde": "1"}
-        for line in lines:
-            upper = line.upper()
-            if not current["descricao"] and not any(x in upper for x in ["NCM", "ICMS", "IPI", "CNPJ", "R$"]):
-                current["descricao"] = line
-            if not current["ncm"]:
-                m = re.search(r"\b(\d{8})\b", line)
-                if m:
-                    current["ncm"] = m.group(1)
-            if not current["icms"] and "ICMS" in upper:
-                p = re.search(r'(\d{1,2}(?:[.,]\d{1,2})?)', line)
-                if p:
-                    current["icms"] = p.group(1)
-            if not current["ipi"] and "IPI" in upper:
-                p = re.search(r'(\d{1,2}(?:[.,]\d{1,2})?)', line)
-                if p:
-                    current["ipi"] = p.group(1)
-            if not current["preco"] and ("R$" in upper or "UNIT" in upper or "VALOR" in upper or "PRECO" in upper or "PREÇO" in upper):
-                m = re.search(r'(\d{1,3}(?:\.\d{3})*,\d{2})', line)
-                if m:
-                    current["preco"] = m.group(1)
-            if current["qtde"] == "1":
-                m = re.search(r'\bQTD(?:E)?\s*:?\s*(\d+)\b', upper)
-                if m:
-                    current["qtde"] = m.group(1)
-        if current["descricao"] or current["ncm"]:
-            found_items.append(current)
-        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": self._post_process_items(found_items, frete)}
+        found_items = self._extract_items_from_text_dump(text_dump)
+        if not found_items:
+            lines = [ln.strip() for ln in text_dump.splitlines() if ln.strip()]
+            current = {"codigo": "", "descricao": "", "ncm": "", "icms": "", "ipi": "", "preco": "", "frete": frete, "qtde": "1"}
+            for line in lines:
+                upper = line.upper()
+                if not current["descricao"] and not any(x in upper for x in ["NCM", "ICMS", "IPI", "CNPJ", "R$"]):
+                    current["descricao"] = line
+                if not current["ncm"]:
+                    m = re.search(r"\b(\d{8})\b", line)
+                    if m:
+                        current["ncm"] = m.group(1)
+                if not current["icms"] and "ICMS" in upper:
+                    p = re.search(r'(\d{1,2}(?:[.,]\d{1,2})?)', line)
+                    if p:
+                        current["icms"] = p.group(1)
+                if not current["ipi"] and "IPI" in upper:
+                    p = re.search(r'(\d{1,2}(?:[.,]\d{1,2})?)', line)
+                    if p:
+                        current["ipi"] = p.group(1)
+                if not current["preco"] and ("R$" in upper or "UNIT" in upper or "VALOR" in upper or "PRECO" in upper or "PREÇO" in upper):
+                    m = re.search(r'(\d{1,3}(?:\.\d{3})*,\d{2})', line)
+                    if m:
+                        current["preco"] = m.group(1)
+                if current["qtde"] == "1":
+                    m = re.search(r'\bQTD(?:E)?\s*:?\s*(\d+)\b', upper)
+                    if m:
+                        current["qtde"] = m.group(1)
+            if current["descricao"] or current["ncm"]:
+                found_items.append(current)
+                self.last_strategy = "ocr_item_unico"
+                self._log("OCR fallback montou 1 item a partir de campos soltos.")
+        return self._finalize_result(filepath, text_dump, found_items, cnpj, compra_para, frete, "imagem")
 
 
 class App(tk.Tk):
@@ -551,6 +829,7 @@ class App(tk.Tk):
         self.psd_t_var = tk.StringVar(value="T / Filial 3 e 5: -")
 
         self.attach_filial_manual = tk.StringVar(value=f"Natal - {CNPJ_RN}")
+        self.attach_learning_enabled = tk.BooleanVar(value=True)
 
         self._build_styles()
         self._build_layout()
@@ -1034,8 +1313,10 @@ class App(tk.Tk):
         tk.Label(top_actions, text="Anexar orcamento", bg="#ffffff", fg="#10243e", font=("Segoe UI", 16, "bold")).grid(
             row=0, column=0, sticky="w"
         )
+        ttk.Checkbutton(top_actions, text="Modo aprendizado", variable=self.attach_learning_enabled).grid(row=0, column=1, padx=(8, 8))
+        ttk.Button(top_actions, text="Ver diagnostico", style="Ghost.TButton", command=self.mostrar_diagnostico).grid(row=0, column=2, padx=(0, 8))
         ttk.Button(top_actions, text="Gerar simulacao", style="Primary.TButton", command=self.processar_orcamento_anexado).grid(
-            row=0, column=2
+            row=0, column=3
         )
 
         self.budget_path_var = tk.StringVar()
@@ -1085,12 +1366,14 @@ class App(tk.Tk):
 
         tk.Label(
             left_card,
-            text="1. Selecione o arquivo.  2. Confira os dados detectados.  3. Se nao identificar RN/PE, escolha a filial acima.  4. Clique em Gerar simulacao.",
+            text="1. Selecione o arquivo.  2. Confira os dados detectados.  3. Se nao identificar RN/PE, escolha a filial acima.  4. Clique em Gerar simulacao.  5. Use Ver diagnostico para entender por que um item foi ou nao reconhecido.",
             bg="#fff4cc",
             fg="#5b4a00",
             font=("Segoe UI", 10),
             padx=12,
             pady=10,
+            wraplength=920,
+            justify="left",
         ).grid(row=8, column=0, columnspan=2, sticky="ew", padx=22, pady=(8, 18))
 
         right_card = tk.Frame(body, bg="#ffffff", bd=1, relief="solid")
@@ -1207,6 +1490,45 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror(APP_TITLE, str(e))
 
+    def mostrar_diagnostico(self):
+        diagnostico = ""
+        if self.budget_data and self.budget_data.get("diagnostics_text"):
+            diagnostico = self.budget_data.get("diagnostics_text", "")
+        else:
+            diagnostico = self.reader.get_diagnostics_text()
+
+        popup = tk.Toplevel(self)
+        popup.title("Diagnóstico da leitura")
+        popup.geometry("1080x680")
+        popup.minsize(900, 520)
+        popup.transient(self)
+        popup.configure(bg="#f4f6fb")
+
+        header = tk.Frame(popup, bg="#6f2dbd", height=68)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        tk.Label(header, text="Diagnóstico da leitura e modo aprendizado", bg="#6f2dbd", fg="white", font=("Segoe UI", 16, "bold")).pack(side="left", padx=20, pady=16)
+
+        top = tk.Frame(popup, bg="#f4f6fb")
+        top.pack(fill="x", padx=16, pady=(12, 6))
+        resumo = self.budget_data.get("learning_summary", self.reader.get_learning_summary()) if self.budget_data else self.reader.get_learning_summary()
+        tk.Label(top, text=resumo, justify="left", anchor="w", bg="#eef2ff", fg="#334155", font=("Segoe UI", 10), padx=12, pady=10).pack(fill="x")
+
+        body = tk.Frame(popup, bg="#f4f6fb")
+        body.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+
+        text_widget = tk.Text(body, wrap="word", font=("Consolas", 10), bg="white", fg="#10243e")
+        text_widget.pack(side="left", fill="both", expand=True)
+        yscroll = ttk.Scrollbar(body, orient="vertical", command=text_widget.yview)
+        yscroll.pack(side="right", fill="y")
+        text_widget.configure(yscrollcommand=yscroll.set)
+        text_widget.insert("1.0", diagnostico or "Nenhum diagnóstico disponível.")
+        text_widget.configure(state="disabled")
+
+        footer = tk.Frame(popup, bg="#f4f6fb")
+        footer.pack(fill="x", padx=16, pady=(0, 16))
+        ttk.Button(footer, text="Fechar", style="Primary.TButton", command=popup.destroy).pack(side="right")
+
     def open_budget(self):
         path = filedialog.askopenfilename(
             title="Selecione o arquivo do orcamento",
@@ -1221,14 +1543,16 @@ class App(tk.Tk):
         if not path:
             return
         try:
-            data = self.reader.read(path)
+            data = self.reader.read(path, learning_enabled=self.attach_learning_enabled.get())
             self.budget_data = data
             self.budget_path_var.set(path)
             self.detect_cnpj_var.set(f"CNPJ: {data.get('cnpj') or 'nao identificado'}")
             self.detect_mode_var.set(f"Compra para: {data.get('compra_para') or 'nao identificada'}")
             self.detect_frete_var.set(f"Frete: {data.get('frete') or '-'}")
             self.total_itens_var.set(f"Itens: {len(data.get('items', []))}")
-            self.status_var.set("Arquivo selecionado. Agora clique em Gerar simulacao.")
+            estrategia = data.get("strategy", "-")
+            fornecedor = data.get("supplier_name", "layout")
+            self.status_var.set(f"Arquivo selecionado. Fornecedor/layout: {fornecedor} | estratégia: {estrategia}.")
         except Exception as e:
             messagebox.showerror(APP_TITLE, str(e))
 
@@ -1239,7 +1563,7 @@ class App(tk.Tk):
 
             self.items = self.budget_data.get("items", [])
             if not self.items:
-                raise ValueError("Nao consegui identificar itens automaticamente nesse arquivo.")
+                raise ValueError("Nao consegui identificar itens automaticamente nesse arquivo. Clique em 'Ver diagnostico' para entender o motivo e ajustar o layout/aprendizado.")
 
             compra_detectada = self.budget_data.get("compra_para", "")
             if compra_detectada not in ("RN", "PE"):

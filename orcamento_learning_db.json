@@ -1,0 +1,65 @@
+{
+  "profiles": {
+    "vendedorangelicagpcabosembarque09042026__13892602042026": {
+      "supplier_name": "Vendedor:ANGÉLICA GP CABOS Embarque: 09/04/2026",
+      "first_seen": "2026-04-07T04:58:40",
+      "successful_reads": 2,
+      "strategies": {
+        "linha_compacta_completa": 2
+      },
+      "sample_headers": [
+        "Nº CÓDIGO DESCRIÇÃO DOS PRODUTOS QTDE UN IPI MVA NCM /SH",
+        "BASE DE CALCULO DO ICMS VALOR ICMS BASE DE CALCULO DO ICMS ST VALOR ICMS SUBSTITUIÇÃO VALOR TOTAL DOS SERVIÇOS VALOR TOT",
+        "VALOR ICMS (ORIGEM) VALOR ICMS (DESTINO) DESCONTOS VALOR DO FRETE VALOR DO IPI VALOR TOTAL DO ORÇAMENTO",
+        "PESO TOTAL TIPO FRETE",
+        "PEDIDO MÍNIMO PARA FRETE FOB : R$ 2.000,00.",
+        "PEDIDO MÍNIMO PARA FRETE CIF : R$ 2.500,00."
+      ],
+      "known_cnpjs": [
+        "13892602042026",
+        "18217682000405",
+        "20568413036461",
+        "51590661808440",
+        "42100130456009",
+        "04202601000013",
+        "50304161809277",
+        "52656325000854",
+        "44900752656526",
+        "86000000000752"
+      ],
+      "last_seen": "2026-04-07T02:12:42",
+      "last_strategy": "linha_compacta_completa",
+      "last_item_count": 1
+    },
+    "oslancessolicitadossaonominaiseestaosujeitosasseguintesvariacoesprevistasnasn__02099861076428": {
+      "supplier_name": "Os lances solicitados são nominais e estão sujeitos as seguintes variações previstas nas n",
+      "first_seen": "2026-04-07T02:27:08",
+      "successful_reads": 1,
+      "strategies": {
+        "linha_megatron_unica": 1
+      },
+      "sample_headers": [
+        "Código Qnt Descrição Qnt Unitário Total S Imp ST Ipi Total C Imp",
+        "ICMS.: 353,41 IPI .: 164,08",
+        "O frete CIF é considerado mediante transporte normal, não envolvendo máquinas e equipamentos especiais. Tais necessidade",
+        "Reajuste de preços:",
+        "Após a validade da proposta os preços poderão ser realinhados em função das variações do custo do cobre (LME e do câmbio"
+      ],
+      "known_cnpjs": [
+        "02099861076428",
+        "62000248146587",
+        "32511701042026",
+        "18217682000405",
+        "20568413036465",
+        "90661805304560",
+        "75900000000000",
+        "00010204020000",
+        "12005042002400",
+        "00210365048640"
+      ],
+      "last_seen": "2026-04-07T02:27:08",
+      "last_strategy": "linha_megatron_unica",
+      "last_item_count": 1
+    }
+  }
+}
