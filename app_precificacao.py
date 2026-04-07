@@ -1,6 +1,7 @@
 import os
 import re
 import csv
+import unicodedata
 from decimal import Decimal, ROUND_HALF_UP
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -66,8 +67,13 @@ def format_pct(value: Decimal) -> str:
     return f"{s}%"
 
 
+def strip_accents(text: str) -> str:
+    return "".join(ch for ch in unicodedata.normalize("NFKD", str(text)) if not unicodedata.combining(ch))
+
+
 def normalize_text(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(text).strip().lower())
+    base = strip_accents(str(text)).strip().lower()
+    return re.sub(r"[^a-z0-9]+", "", base)
 
 
 class PricingEngine:
@@ -190,12 +196,144 @@ class UniversalBudgetReader:
         return "", ""
 
     def _detect_frete(self, text_dump: str):
-        upper = text_dump.upper()
-        if "FRETE FOB" in upper or " FOB " in f" {upper} ":
-            return "FOB"
-        if "FRETE CIF" in upper or " CIF " in f" {upper} ":
+        upper = strip_accents(text_dump).upper()
+        compact = re.sub(r"[^A-Z0-9]+", " ", upper)
+        explicit_tipo = re.search(r"TIPO\s+FRETE\s+([A-Z\.]+)", upper)
+        if explicit_tipo:
+            valor = re.sub(r"[^A-Z]", "", explicit_tipo.group(1))
+            if valor == "FOB":
+                return "FOB"
+            if valor == "CIF":
+                return "CIF"
+        if re.search(r"C\.?I\.?F\.?", upper):
             return "CIF"
+        if re.search(r"F\.?O\.?B\.?", upper):
+            return "FOB"
+        if "FRETE CIF" in compact:
+            return "CIF"
+        if "FRETE FOB" in compact:
+            return "FOB"
         return "CIF"
+
+    def _safe_decimal(self, value, default="0"):
+        try:
+            return to_decimal(value)
+        except Exception:
+            return Decimal(default)
+
+    def _extract_default_tax_rates(self, text_dump: str):
+        txt = strip_accents(text_dump).upper()
+
+        total_produtos = None
+        total_ipi = None
+        total_icms = None
+
+        m_prod = re.search(r"VALOR\s+TOTAL\s+DOS\s+PRODUTOS\s*[:\-]?\s*([\d\.,]+)", txt)
+        if m_prod:
+            total_produtos = self._safe_decimal(m_prod.group(1))
+        valores_block = None
+        vals = re.findall(r"VALORES?\s+DO\s+ORCAMENTO.*?([\d\.,\s]{20,})", txt, flags=re.S)
+        if vals:
+            valores_block = vals[0]
+            nums = re.findall(r"\d{1,3}(?:\.\d{3})*,\d{2}", valores_block)
+            if (total_produtos is None or total_produtos == 0) and nums:
+                total_produtos = self._safe_decimal(nums[-2] if len(nums) >= 2 else nums[-1])
+
+        m_ipi = re.search(r"VALOR\s+DO\s+IPI\s*[:\-]?\s*([\d\.,]+)", txt)
+        if m_ipi:
+            total_ipi = self._safe_decimal(m_ipi.group(1))
+        icms_matches = re.findall(r"VALOR\s+ICMS\s*[:\-]?\s*([\d\.,]+)", txt)
+        if icms_matches:
+            positivos = [self._safe_decimal(v) for v in icms_matches if self._safe_decimal(v) > 0]
+            if positivos:
+                total_icms = max(positivos)
+        if (total_icms is None or total_icms == 0) and valores_block:
+            nums = [self._safe_decimal(v) for v in re.findall(r"\d{1,3}(?:\.\d{3})*,\d{2}", valores_block)]
+            positivos = [n for n in nums if n > 0]
+            if len(positivos) >= 2:
+                total_icms = positivos[1]
+
+        icms = Decimal("0")
+        ipi = Decimal("0")
+        if total_produtos and total_produtos > 0:
+            if total_icms and total_icms > 0:
+                icms = (total_icms / total_produtos).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+            if total_ipi and total_ipi > 0:
+                ipi = (total_ipi / total_produtos).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        return {"icms": icms, "ipi": ipi}
+
+    def _looks_like_product_description(self, text: str):
+        t = strip_accents(text).upper()
+        blocked = [
+            "ORCAMENTO", "DADOS DOS PRODUTOS", "VALORES DO ORCAMENTO", "DADOS ADICIONAIS",
+            "CLIENTE", "ENDERECO", "CNPJ", "TELEFONE", "PAGAMENTO", "EMBARQUE",
+            "VALOR TOTAL", "BASE DE CALCULO", "PEDIDO MINIMO", "APROVACAO", "OBSERVACAO"
+        ]
+        if any(b in t for b in blocked):
+            return False
+        return bool(re.search(r"[A-Z]", t))
+
+    def _extract_items_from_text_dump(self, text_dump: str):
+        default_taxes = self._extract_default_tax_rates(text_dump)
+        default_frete = self._detect_frete(text_dump)
+        lines = [re.sub(r"\s+", " ", ln).strip() for ln in text_dump.splitlines() if ln.strip()]
+        found = []
+
+        row_patterns = [
+            re.compile(r"^(?P<idx>\d{1,3})\s+(?P<codigo>[A-Z0-9\-]{2,})\s+(?P<descricao>.+?)\s+(?P<qtde>\d+)\s+(?P<un>[A-Z]{2,4})\s+(?P<preco>\d{1,3}(?:\.\d{3})*,\d{2,4})\s+(?P<total>\d{1,3}(?:\.\d{3})*,\d{2})\s+(?P<ipi>\d{1,2}(?:,\d{1,2})?)\s+(?P<mva>\d{1,2}(?:,\d{1,2})?)\s+(?P<ncm>\d{8})$"),
+            re.compile(r"^(?P<codigo>[A-Z0-9\-]{2,})\s+(?P<descricao>.+?)\s+(?P<qtde>\d+)\s+(?P<preco>\d{1,3}(?:\.\d{3})*,\d{2,4})\s+(?P<total>\d{1,3}(?:\.\d{3})*,\d{2})\s+(?P<icms>\d{1,2}(?:,\d{1,2})?)\s+(?P<ipi>\d{1,2}(?:,\d{1,2})?)\s+(?P<ncm>\d{8})$"),
+        ]
+
+        for line in lines:
+            for pattern in row_patterns:
+                m = pattern.match(line)
+                if not m:
+                    continue
+                gd = m.groupdict()
+                found.append({
+                    "codigo": gd.get("codigo", ""),
+                    "descricao": gd.get("descricao", "").strip(" -"),
+                    "qtde": gd.get("qtde", "1"),
+                    "preco": gd.get("preco", "0"),
+                    "ncm": gd.get("ncm", ""),
+                    "icms": gd.get("icms") or default_taxes["icms"],
+                    "ipi": gd.get("ipi") or default_taxes["ipi"],
+                    "frete": default_frete,
+                })
+                break
+
+        if found:
+            return found
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            nums = re.findall(r"\d{1,3}(?:\.\d{3})*,\d{2,4}|\d{8}", line)
+            if len(nums) >= 4 and any(len(n) == 8 and n.isdigit() for n in nums):
+                ncm_match = re.search(r"(\d{8})\s*$", line)
+                qtd_match = re.search(r"\s(\d+)\s+[A-Z]{2,4}\s+\d{1,3}(?:\.\d{3})*,\d{2,4}", line)
+                codigo_match = re.match(r"^(?:\d{1,3}\s+)?([A-Z0-9\-]{2,})\s+", line)
+                if ncm_match and qtd_match and codigo_match:
+                    ncm = ncm_match.group(1)
+                    qtd = qtd_match.group(1)
+                    codigo = codigo_match.group(1)
+                    preco_candidates = re.findall(r"\d{1,3}(?:\.\d{3})*,\d{2,4}", line)
+                    preco = preco_candidates[0] if preco_candidates else "0"
+                    desc_part = re.sub(r"^(?:\d{1,3}\s+)?" + re.escape(codigo) + r"\s+", "", line)
+                    desc_part = re.sub(r"\s+" + re.escape(qtd) + r"\s+[A-Z]{2,4}.*$", "", desc_part).strip()
+                    if self._looks_like_product_description(desc_part):
+                        found.append({
+                            "codigo": codigo,
+                            "descricao": desc_part,
+                            "qtde": qtd,
+                            "preco": preco,
+                            "ncm": ncm,
+                            "icms": default_taxes["icms"],
+                            "ipi": default_taxes["ipi"],
+                            "frete": default_frete,
+                        })
+            i += 1
+        return found
 
     def _match_header(self, value):
         normalized = normalize_text(value)
@@ -336,15 +474,21 @@ class UniversalBudgetReader:
         with pdfplumber.open(filepath) as pdf:
             for page in pdf.pages:
                 text = page.extract_text() or ""
-                text_parts.append(text)
+                if text:
+                    text_parts.append(text)
                 tables = page.extract_tables() or []
                 for table in tables:
                     if table:
                         found_items.extend(self._extract_from_tabular_rows(table, text))
+                if text:
+                    found_items.extend(self._extract_items_from_text_dump(text))
         text_dump = "\n".join(text_parts)
         cnpj, compra_para = self._detect_cnpj_and_mode(text_dump)
         frete = self._detect_frete(text_dump)
-        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": self._post_process_items(found_items, frete)}
+        items = self._post_process_items(found_items, frete)
+        if not items and text_dump:
+            items = self._post_process_items(self._extract_items_from_text_dump(text_dump), frete)
+        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": items}
 
     def _read_image(self, filepath: str):
         try:
