@@ -8,7 +8,7 @@ from tkinter import ttk, messagebox, filedialog
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
-APP_TITLE = "Assistente Profissional de Orçamento"
+APP_TITLE = "Assistente Profissional de Orcamento"
 DEFAULT_WORKBOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "1 NOVO SIMULADOR_PRECIFICACAO_V2.xlsx")
 
 PIS_COFINS_RATE = Decimal("0.0925")
@@ -21,21 +21,7 @@ CNPJ_PE = "18.217.682/0001-54"
 CNPJ_RN_DIGITS = "18217682000405"
 CNPJ_PE_DIGITS = "18217682000154"
 
-BG = "#f5f7fb"
-CARD = "#ffffff"
-PRIMARY = "#6f2dbd"
-PRIMARY_DARK = "#59259a"
-TEXT = "#1f2937"
-MUTED = "#6b7280"
-SUCCESS = "#0f766e"
-SOFT = "#eef2ff"
-WARNING = "#fff7d6"
-BORDER = "#d8deea"
 
-
-# ---------------------------
-# Regras de cálculo
-# ---------------------------
 def q2(value: Decimal) -> Decimal:
     return value.quantize(ROUND_MONEY, rounding=ROUND_HALF_UP)
 
@@ -90,7 +76,7 @@ class PricingEngine:
     def load_workbook(self, workbook_path: str):
         if not os.path.exists(workbook_path):
             raise FileNotFoundError(
-                f"Planilha base não encontrada.\n\nColoque o arquivo '{os.path.basename(workbook_path)}' na mesma pasta do programa."
+                f"Planilha base nao encontrada.\n\nColoque o arquivo '{os.path.basename(workbook_path)}' na mesma pasta do programa."
             )
 
         wb = openpyxl.load_workbook(workbook_path, data_only=False)
@@ -122,7 +108,7 @@ class PricingEngine:
     def calcular(self, compra_para: str, preco_unitario: Decimal, ncm: str, icms: Decimal, ipi: Decimal, frete_tipo: str):
         ncm_key = str(ncm).strip()
         if ncm_key not in self.ncm_factors:
-            raise KeyError(f"NCM {ncm_key} não encontrado na aba 'Base Dados NCM'.")
+            raise KeyError(f"NCM {ncm_key} nao encontrado na aba 'Base Dados NCM'.")
 
         fatores = self.ncm_factors[ncm_key]
         st_rate = self.st_rates.get(ncm_key, Decimal("0"))
@@ -153,9 +139,6 @@ class PricingEngine:
         return {"r": r, "s": s, "t": t}
 
 
-# ---------------------------
-# Leitor universal
-# ---------------------------
 class UniversalBudgetReader:
     HEADER_ALIASES = {
         "descricao": ["descricao", "descrição", "produto", "item", "nomeproduto", "descricaoproduto", "material"],
@@ -170,7 +153,7 @@ class UniversalBudgetReader:
 
     def read(self, filepath: str):
         ext = os.path.splitext(filepath)[1].lower()
-        if ext in (".xlsx", ".xlsm", ".xls"):
+        if ext in (".xlsx", ".xlsm"):
             return self._read_excel(filepath)
         if ext == ".csv":
             return self._read_csv(filepath)
@@ -178,7 +161,7 @@ class UniversalBudgetReader:
             return self._read_pdf(filepath)
         if ext in (".png", ".jpg", ".jpeg"):
             return self._read_image(filepath)
-        raise ValueError("Formato não suportado. Use PDF, XLS, XLSX, XLSM, CSV, PNG, JPG ou JPEG.")
+        raise ValueError("Formato nao suportado. Use PDF, XLSX, XLSM, CSV, PNG, JPG ou JPEG.")
 
     def _detect_cnpj_and_mode(self, text_dump: str):
         texto_numeros = re.sub(r"\D", "", text_dump)
@@ -227,7 +210,7 @@ class UniversalBudgetReader:
             deduped.append(item)
         return deduped
 
-    def _post_process_items(self, items, default_frete, compra_para_override=""):
+    def _post_process_items(self, items, default_frete):
         processed = []
         for item in self._dedupe_items(items):
             desc = str(item.get("descricao", "")).strip()
@@ -248,7 +231,6 @@ class UniversalBudgetReader:
                 "frete": self._detect_frete(str(item.get("frete", ""))) or default_frete,
                 "preco": preco,
                 "qtde": qtde,
-                "compra_para": compra_para_override or str(item.get("compra_para", "")).upper(),
             })
         return processed
 
@@ -262,7 +244,7 @@ class UniversalBudgetReader:
                 matched = self._match_header(val)
                 if matched:
                     current_map[matched] = col_idx
-            if ("descricao" in current_map and "ncm" in current_map and "preco" in current_map):
+            if ("descricao" in current_map and "ncm" in current_map and "preco" in current_map and "qtde" in current_map):
                 for data_row in rows[idx + 1:]:
                     if not any(v not in (None, "") for v in data_row):
                         continue
@@ -270,8 +252,6 @@ class UniversalBudgetReader:
                     for field, col_idx in current_map.items():
                         if col_idx < len(data_row):
                             item[field] = data_row[col_idx]
-                    if "qtde" not in item:
-                        item["qtde"] = 1
                     found_items.append(item)
                 break
         if found_items:
@@ -324,7 +304,7 @@ class UniversalBudgetReader:
         text_dump = "\n".join(text_parts)
         cnpj, compra_para = self._detect_cnpj_and_mode(text_dump)
         frete = self._detect_frete(text_dump)
-        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": self._post_process_items(found_items, frete, compra_para)}
+        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": self._post_process_items(found_items, frete)}
 
     def _read_csv(self, filepath: str):
         with open(filepath, "r", encoding="utf-8-sig", newline="") as f:
@@ -333,7 +313,7 @@ class UniversalBudgetReader:
         found_items = self._extract_from_tabular_rows(rows, text_dump)
         cnpj, compra_para = self._detect_cnpj_and_mode(text_dump)
         frete = self._detect_frete(text_dump)
-        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": self._post_process_items(found_items, frete, compra_para)}
+        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": self._post_process_items(found_items, frete)}
 
     def _read_pdf(self, filepath: str):
         try:
@@ -352,21 +332,21 @@ class UniversalBudgetReader:
         text_dump = "\n".join(text_parts)
         cnpj, compra_para = self._detect_cnpj_and_mode(text_dump)
         frete = self._detect_frete(text_dump)
-        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": self._post_process_items(found_items, frete, compra_para)}
+        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": self._post_process_items(found_items, frete)}
 
     def _read_image(self, filepath: str):
         try:
             from PIL import Image
             import pytesseract
         except Exception:
-            raise ImportError("Para ler imagem, instale Pillow e pytesseract, além do Tesseract OCR no Windows.")
+            raise ImportError("Para ler imagem, instale Pillow e pytesseract, alem do Tesseract OCR no Windows.")
         image = Image.open(filepath)
         text_dump = pytesseract.image_to_string(image, lang="por+eng", config="--psm 6")
         cnpj, compra_para = self._detect_cnpj_and_mode(text_dump)
         frete = self._detect_frete(text_dump)
         lines = [ln.strip() for ln in text_dump.splitlines() if ln.strip()]
         found_items = []
-        current = {"codigo": "", "descricao": "", "ncm": "", "icms": "", "ipi": "", "preco": "", "frete": frete, "qtde": "1", "compra_para": compra_para}
+        current = {"codigo": "", "descricao": "", "ncm": "", "icms": "", "ipi": "", "preco": "", "frete": frete, "qtde": "1"}
         for line in lines:
             upper = line.upper()
             if not current["descricao"] and not any(x in upper for x in ["NCM", "ICMS", "IPI", "CNPJ", "R$"]):
@@ -393,46 +373,46 @@ class UniversalBudgetReader:
                     current["qtde"] = m.group(1)
         if current["descricao"] or current["ncm"]:
             found_items.append(current)
-        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": self._post_process_items(found_items, frete, compra_para)}
+        return {"cnpj": cnpj, "compra_para": compra_para, "frete": frete, "items": self._post_process_items(found_items, frete)}
 
 
-class ModernCard(tk.Frame):
-    def __init__(self, master, **kwargs):
-        super().__init__(master, bg=CARD, highlightthickness=1, highlightbackground=BORDER, bd=0, **kwargs)
+class ScrollableFrame(ttk.Frame):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.canvas = tk.Canvas(self, highlightthickness=0, bg="#f4f6fb")
+        self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.inner = ttk.Frame(self.canvas)
+        self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.window = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.vsb.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.vsb.pack(side="right", fill="y")
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _on_canvas_configure(self, event):
+        self.canvas.itemconfigure(self.window, width=event.width)
+
+    def _on_mousewheel(self, event):
+        if self.winfo_ismapped():
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("1440x900")
-        self.minsize(1220, 760)
-        self.configure(bg=BG)
+        self.geometry("1480x900")
+        self.minsize(1320, 820)
+        self.configure(bg="#eceff5")
 
         self.engine = PricingEngine(DEFAULT_WORKBOOK)
         self.reader = UniversalBudgetReader()
         self.items = []
         self.current_results = []
-        self.current_mode = ""
-        self.current_file = ""
-
-        self.product_name_var = tk.StringVar()
-        self.manual_ncm_var = tk.StringVar()
-        self.manual_ipi_var = tk.StringVar(value="0")
-        self.manual_icms_var = tk.StringVar(value="0")
-        self.manual_preco_var = tk.StringVar(value="0")
-        self.manual_qtde_var = tk.StringVar(value="1")
-        self.manual_frete_var = tk.StringVar(value="CIF")
-        self.manual_filial_var = tk.StringVar(value=f"Natal - {CNPJ_RN}")
-        self.budget_path_var = tk.StringVar()
-        self.detect_cnpj_var = tk.StringVar(value="CNPJ identificado: -")
-        self.detect_mode_var = tk.StringVar(value="Compra para: -")
-        self.detect_frete_var = tk.StringVar(value="Frete identificado: -")
-        self.total_itens_var = tk.StringVar(value="Itens identificados: 0")
-        self.status_var = tk.StringVar(value="Escolha uma das opções iniciais para começar.")
 
         self._build_styles()
-        self._build_ui()
+        self._build_layout()
         self.show_home()
 
     def _build_styles(self):
@@ -441,349 +421,327 @@ class App(tk.Tk):
             style.theme_use("vista")
         except Exception:
             pass
-        style.configure("Primary.TButton", font=("Segoe UI", 11, "bold"), padding=(16, 12))
-        style.configure("Secondary.TButton", font=("Segoe UI", 10), padding=(14, 10))
-        style.configure("Clean.TEntry", padding=8)
-        style.configure("Clean.TCombobox", padding=6)
+
+        style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"), padding=(14, 10))
+        style.configure("Ghost.TButton", font=("Segoe UI", 10), padding=(12, 10))
+        style.configure("Card.TLabelframe", background="#ffffff")
+        style.configure("Card.TLabelframe.Label", font=("Segoe UI", 11, "bold"))
         style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
-        style.configure("Treeview", rowheight=28, font=("Segoe UI", 10))
+        style.configure("Treeview", font=("Segoe UI", 10), rowheight=30)
 
-    def _build_ui(self):
+    def _build_layout(self):
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
 
-        header = tk.Frame(self, bg=PRIMARY, height=92)
+        header = tk.Frame(self, bg="#6f2dbd", height=110)
         header.grid(row=0, column=0, sticky="ew")
         header.grid_propagate(False)
-        header.grid_columnconfigure(0, weight=1)
+        tk.Label(header, text="ASSISTENTE PROFISSIONAL DE ORCAMENTO", bg="#6f2dbd", fg="white", font=("Segoe UI", 24, "bold")).pack(pady=(20, 4))
+        tk.Label(header, text="Entrada manual ou leitura automatica de orcamento com visual corporativo", bg="#6f2dbd", fg="#eadcff", font=("Segoe UI", 11)).pack()
 
-        tk.Label(
-            header,
-            text="ASSISTENTE PROFISSIONAL DE ORÇAMENTO",
-            bg=PRIMARY,
-            fg="white",
-            font=("Segoe UI", 22, "bold")
-        ).grid(row=0, column=0, pady=(18, 2))
+        nav = tk.Frame(self, bg="#eceff5", pady=12)
+        nav.grid(row=1, column=0, sticky="ew")
+        nav.grid_columnconfigure(4, weight=1)
+        ttk.Button(nav, text="Tela inicial", style="Ghost.TButton", command=self.show_home).grid(row=0, column=0, padx=(20, 10))
+        ttk.Button(nav, text="Digitar manualmente", style="Ghost.TButton", command=self.show_manual).grid(row=0, column=1, padx=10)
+        ttk.Button(nav, text="Anexar orcamento", style="Ghost.TButton", command=self.show_attach).grid(row=0, column=2, padx=10)
+        ttk.Button(nav, text="Exportar Excel", style="Primary.TButton", command=self.exportar_excel).grid(row=0, column=3, padx=10)
 
-        tk.Label(
-            header,
-            text="Entrada manual ou leitura automática de orçamento com visual corporativo",
-            bg=PRIMARY,
-            fg="#ece7ff",
-            font=("Segoe UI", 10)
-        ).grid(row=1, column=0)
-
-        body = tk.Frame(self, bg=BG)
-        body.grid(row=1, column=0, sticky="nsew", padx=18, pady=18)
-        body.grid_columnconfigure(0, weight=1)
-        body.grid_rowconfigure(1, weight=1)
-
-        toolbar = tk.Frame(body, bg=BG)
-        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 12))
-
-        self.btn_home = ttk.Button(toolbar, text="Tela inicial", command=self.show_home, style="Secondary.TButton")
-        self.btn_home.pack(side="left")
-        self.btn_manual = ttk.Button(toolbar, text="Digitar manualmente", command=self.show_manual_form, style="Secondary.TButton")
-        self.btn_manual.pack(side="left", padx=8)
-        self.btn_auto = ttk.Button(toolbar, text="Anexar orçamento", command=self.show_auto_mode, style="Secondary.TButton")
-        self.btn_auto.pack(side="left")
-
-        self.content = tk.Frame(body, bg=BG)
-        self.content.grid(row=1, column=0, sticky="nsew")
+        self.content = tk.Frame(self, bg="#eceff5")
+        self.content.grid(row=2, column=0, sticky="nsew", padx=20, pady=(0, 10))
         self.content.grid_columnconfigure(0, weight=1)
         self.content.grid_rowconfigure(0, weight=1)
 
-        status = tk.Label(
-            body,
-            textvariable=self.status_var,
-            anchor="w",
-            bg="#eaeef8",
-            fg=TEXT,
-            font=("Segoe UI", 10, "bold"),
-            padx=12,
-            pady=10,
-            relief="flat"
-        )
-        status.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        self.status_var = tk.StringVar(value="Pronto para iniciar.")
+        status = tk.Label(self, textvariable=self.status_var, anchor="w", bg="#dfe5f2", fg="#16253d", font=("Segoe UI", 10, "bold"), padx=14, pady=10)
+        status.grid(row=3, column=0, sticky="ew")
 
     def clear_content(self):
-        for widget in self.content.winfo_children():
-            widget.destroy()
+        for w in self.content.winfo_children():
+            w.destroy()
+
+    def build_hero(self, parent, title, subtitle):
+        hero = tk.Frame(parent, bg="#ffffff", bd=1, relief="solid")
+        hero.grid(row=0, column=0, sticky="ew")
+        hero.grid_columnconfigure(0, weight=1)
+        tk.Label(hero, text=title, bg="#ffffff", fg="#10243e", font=("Segoe UI", 22, "bold")).grid(row=0, column=0, sticky="w", padx=24, pady=(22, 6))
+        tk.Label(hero, text=subtitle, bg="#ffffff", fg="#64748b", font=("Segoe UI", 11)).grid(row=1, column=0, sticky="w", padx=24, pady=(0, 22))
+        return hero
 
     def show_home(self):
-        self.current_mode = "home"
         self.clear_content()
+        self.content.grid_rowconfigure(1, weight=1)
+        self.build_hero(self.content, "Escolha como deseja iniciar", "Use o modo manual para informar um item rapidamente ou anexe um orcamento para leitura automatica.")
 
-        wrap = tk.Frame(self.content, bg=BG)
-        wrap.pack(fill="both", expand=True)
-        wrap.grid_columnconfigure((0, 1), weight=1)
-        wrap.grid_rowconfigure(0, weight=1)
+        cards = tk.Frame(self.content, bg="#eceff5")
+        cards.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
+        cards.grid_columnconfigure((0, 1), weight=1)
 
-        left = ModernCard(wrap)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-        right = ModernCard(wrap)
-        right.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+        self._create_option_card(cards, 0, "Modo manual", "Preencha Nome do Produto, NCM, IPI, ICMS, Preco, Quantidade, Frete e Filial. Ideal para cotacao rapida de um item.", "Abrir formulario", self.show_manual)
+        self._create_option_card(cards, 1, "Anexar orcamento", "Selecione arquivos PDF, XLSX, XLSM, CSV, PNG, JPG ou JPEG. O sistema tenta identificar CNPJ, frete, filial e todos os itens automaticamente.", "Selecionar arquivo", self.show_attach)
+        self.status_var.set("Tela inicial carregada.")
 
-        self._build_choice_card(
-            left,
-            "01  |  Digitar as informações manualmente",
-            "Abra um formulário guiado para informar produto, NCM, IPI, ICMS, preço, frete e filial da compra.",
-            [
-                "Nome do produto",
-                "NCM",
-                "IPI",
-                "Frete FOB ou CIF",
-                f"Filial Natal ({CNPJ_RN})",
-                f"Filial Pernambuco ({CNPJ_PE})",
-            ],
-            "Abrir formulário manual",
-            self.show_manual_form,
-        )
+    def _create_option_card(self, parent, col, title, desc, btn_text, command):
+        card = tk.Frame(parent, bg="#ffffff", bd=1, relief="solid")
+        card.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 8, 8 if col == 0 else 0))
+        card.grid_columnconfigure(0, weight=1)
+        tk.Label(card, text=title, bg="#ffffff", fg="#10243e", font=("Segoe UI", 18, "bold")).grid(row=0, column=0, sticky="w", padx=24, pady=(24, 10))
+        tk.Label(card, text=desc, bg="#ffffff", fg="#475569", font=("Segoe UI", 11), justify="left", wraplength=520).grid(row=1, column=0, sticky="w", padx=24)
+        ttk.Button(card, text=btn_text, style="Primary.TButton", command=command).grid(row=2, column=0, sticky="w", padx=24, pady=24)
 
-        self._build_choice_card(
-            right,
-            "02  |  Anexar orçamento para preenchimento automático",
-            "Selecione um orçamento em Excel, CSV, PDF ou imagem. O sistema tenta identificar CNPJ, frete, filial e itens automaticamente.",
-            [
-                "Anexar arquivo pelo seletor",
-                "Leitura automática do cabeçalho e itens",
-                "Detecção de CNPJ e filial RN/PE",
-                "Listagem dos itens encontrados",
-                "Cálculo em lote e exportação Excel",
-            ],
-            "Anexar orçamento",
-            self.show_auto_mode,
-        )
-
-        self.status_var.set("Tela inicial carregada. Escolha a forma de entrada desejada.")
-
-    def _build_choice_card(self, parent, title, desc, bullets, button_text, command):
-        parent.grid_columnconfigure(0, weight=1)
-        tk.Label(parent, text=title, bg=CARD, fg=TEXT, font=("Segoe UI", 17, "bold"), anchor="w").grid(row=0, column=0, sticky="w", padx=26, pady=(26, 8))
-        tk.Label(parent, text=desc, bg=CARD, fg=MUTED, font=("Segoe UI", 10), justify="left", wraplength=520).grid(row=1, column=0, sticky="w", padx=26)
-
-        bullets_frame = tk.Frame(parent, bg=SOFT)
-        bullets_frame.grid(row=2, column=0, sticky="ew", padx=26, pady=22)
-        bullets_frame.grid_columnconfigure(0, weight=1)
-        for i, item in enumerate(bullets):
-            tk.Label(bullets_frame, text=f"• {item}", bg=SOFT, fg=TEXT, font=("Segoe UI", 10), anchor="w").grid(row=i, column=0, sticky="ew", padx=16, pady=6)
-
-        action = tk.Button(parent, text=button_text, command=command, bg=PRIMARY, fg="white", activebackground=PRIMARY_DARK,
-                           activeforeground="white", relief="flat", font=("Segoe UI", 11, "bold"), cursor="hand2", padx=16, pady=12)
-        action.grid(row=3, column=0, sticky="w", padx=26, pady=(0, 26))
-
-    def show_manual_form(self):
-        self.current_mode = "manual"
+    def show_manual(self):
         self.clear_content()
+        wrapper = tk.Frame(self.content, bg="#eceff5")
+        wrapper.grid(row=0, column=0, sticky="nsew")
+        wrapper.grid_columnconfigure(0, weight=1)
+        wrapper.grid_rowconfigure(1, weight=1)
+        self.build_hero(wrapper, "Entrada manual", "Tela otimizada para exibir todos os campos e manter os botoes principais sempre visiveis.")
 
-        container = tk.Frame(self.content, bg=BG)
-        container.pack(fill="both", expand=True)
-        container.grid_columnconfigure(0, weight=1)
-        container.grid_columnconfigure(1, weight=1)
-        container.grid_rowconfigure(1, weight=1)
+        body = tk.Frame(wrapper, bg="#eceff5")
+        body.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
+        body.grid_columnconfigure(0, weight=3)
+        body.grid_columnconfigure(1, weight=2)
+        body.grid_rowconfigure(0, weight=1)
 
-        top = ModernCard(container)
-        top.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
-        tk.Label(top, text="Entrada manual", bg=CARD, fg=TEXT, font=("Segoe UI", 18, "bold")).pack(anchor="w", padx=24, pady=(20, 6))
-        tk.Label(top, text="Preencha os campos abaixo. Após confirmar, o item será enviado para a tabela de resultados.", bg=CARD, fg=MUTED, font=("Segoe UI", 10)).pack(anchor="w", padx=24, pady=(0, 18))
+        # Coluna esquerda com rolagem de seguranca
+        left_card = tk.Frame(body, bg="#ffffff", bd=1, relief="solid")
+        left_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        left_card.grid_rowconfigure(1, weight=1)
+        left_card.grid_columnconfigure(0, weight=1)
+        tk.Label(left_card, text="Formulario", bg="#ffffff", fg="#10243e", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w", padx=22, pady=(18, 10))
 
-        form_card = ModernCard(container)
-        form_card.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
-        preview_card = ModernCard(container)
-        preview_card.grid(row=1, column=1, sticky="nsew", padx=(8, 0))
+        scroller = ScrollableFrame(left_card)
+        scroller.grid(row=1, column=0, sticky="nsew", padx=14)
+        scroller.canvas.configure(bg="#ffffff")
 
-        self._build_manual_form(form_card)
-        self._build_manual_preview(preview_card)
-        self.status_var.set("Modo manual ativo. Informe os dados do produto e clique em Confirmar item manual.")
+        form = tk.Frame(scroller.inner, bg="#ffffff")
+        form.pack(fill="both", expand=True, padx=8, pady=6)
+        form.grid_columnconfigure(1, weight=1)
+        form.grid_columnconfigure(3, weight=1)
 
-    def _build_manual_form(self, parent):
-        parent.grid_columnconfigure(1, weight=1)
+        self.manual_nome = tk.StringVar()
+        self.manual_ncm = tk.StringVar()
+        self.manual_ipi = tk.StringVar(value="0")
+        self.manual_icms = tk.StringVar(value="7")
+        self.manual_preco = tk.StringVar()
+        self.manual_qtde = tk.StringVar(value="1")
+        self.manual_frete = tk.StringVar(value="FOB")
+        self.manual_filial = tk.StringVar(value=f"Natal - {CNPJ_RN}")
+
         fields = [
-            ("Nome do Produto", self.product_name_var),
-            ("NCM", self.manual_ncm_var),
-            ("IPI (%)", self.manual_ipi_var),
-            ("ICMS (%)", self.manual_icms_var),
-            ("Preço Unitário", self.manual_preco_var),
-            ("Quantidade", self.manual_qtde_var),
+            ("Nome do Produto", self.manual_nome, 0, 0, 1),
+            ("NCM", self.manual_ncm, 1, 0, 1),
+            ("IPI (%)", self.manual_ipi, 2, 0, 1),
+            ("ICMS (%)", self.manual_icms, 3, 0, 1),
+            ("Preco Unitario", self.manual_preco, 4, 0, 1),
+            ("Quantidade", self.manual_qtde, 5, 0, 1),
         ]
+        for label, var, row, col, span in fields:
+            self._add_entry(form, label, var, row, col, span)
 
-        tk.Label(parent, text="Formulário", bg=CARD, fg=TEXT, font=("Segoe UI", 15, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=22, pady=(22, 18))
+        tk.Label(form, text="Frete", bg="#ffffff", fg="#16253d", font=("Segoe UI", 11, "bold")).grid(row=6, column=0, sticky="w", pady=(10, 4))
+        frete_box = tk.Frame(form, bg="#ffffff")
+        frete_box.grid(row=6, column=1, sticky="w", pady=(10, 4))
+        ttk.Radiobutton(frete_box, text="FOB", variable=self.manual_frete, value="FOB").pack(side="left", padx=(0, 12))
+        ttk.Radiobutton(frete_box, text="CIF", variable=self.manual_frete, value="CIF").pack(side="left")
 
-        for idx, (label_text, var) in enumerate(fields, start=1):
-            tk.Label(parent, text=label_text, bg=CARD, fg=TEXT, font=("Segoe UI", 10, "bold")).grid(row=idx, column=0, sticky="w", padx=22, pady=8)
-            ttk.Entry(parent, textvariable=var, style="Clean.TEntry").grid(row=idx, column=1, sticky="ew", padx=(0, 22), pady=8)
+        tk.Label(form, text="Filial", bg="#ffffff", fg="#16253d", font=("Segoe UI", 11, "bold")).grid(row=7, column=0, sticky="w", pady=(12, 4))
+        filial_cb = ttk.Combobox(form, textvariable=self.manual_filial, state="readonly", width=54)
+        filial_cb["values"] = [f"Natal - {CNPJ_RN}", f"Pernambuco - {CNPJ_PE}"]
+        filial_cb.grid(row=7, column=1, sticky="ew", pady=(12, 4))
 
-        frete_row = len(fields) + 1
-        tk.Label(parent, text="FRETE", bg=CARD, fg=TEXT, font=("Segoe UI", 10, "bold")).grid(row=frete_row, column=0, sticky="w", padx=22, pady=8)
-        frete_wrap = tk.Frame(parent, bg=CARD)
-        frete_wrap.grid(row=frete_row, column=1, sticky="w", padx=(0, 22), pady=8)
-        ttk.Radiobutton(frete_wrap, text="FOB", variable=self.manual_frete_var, value="FOB").pack(side="left", padx=(0, 18))
-        ttk.Radiobutton(frete_wrap, text="CIF", variable=self.manual_frete_var, value="CIF").pack(side="left")
+        hints = tk.Frame(form, bg="#ffffff")
+        hints.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(16, 18))
+        hints.grid_columnconfigure(0, weight=1)
+        tk.Label(hints, text="Dica: preenchendo NCM, IPI, ICMS e Preco Unitario, o sistema ja consegue calcular e gerar o item na grade abaixo.", bg="#fff4cc", fg="#5b4a00", font=("Segoe UI", 10), wraplength=760, padx=14, pady=12).grid(row=0, column=0, sticky="ew")
 
-        filial_row = frete_row + 1
-        tk.Label(parent, text="Filial da compra", bg=CARD, fg=TEXT, font=("Segoe UI", 10, "bold")).grid(row=filial_row, column=0, sticky="w", padx=22, pady=8)
-        filial_combo = ttk.Combobox(
-            parent,
-            textvariable=self.manual_filial_var,
-            state="readonly",
-            style="Clean.TCombobox",
-            values=[f"Natal - {CNPJ_RN}", f"Pernambuco - {CNPJ_PE}"]
+        fixed_actions = tk.Frame(left_card, bg="#ffffff")
+        fixed_actions.grid(row=2, column=0, sticky="ew", padx=22, pady=(8, 18))
+        ttk.Button(fixed_actions, text="Limpar campos", style="Ghost.TButton", command=self.limpar_manual).pack(side="left")
+        ttk.Button(fixed_actions, text="Confirmar item manual", style="Primary.TButton", command=self.confirmar_manual).pack(side="right")
+
+        right_card = tk.Frame(body, bg="#ffffff", bd=1, relief="solid")
+        right_card.grid(row=0, column=1, sticky="nsew")
+        right_card.grid_columnconfigure(0, weight=1)
+        tk.Label(right_card, text="Resumo do modo manual", bg="#ffffff", fg="#10243e", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w", padx=22, pady=(18, 10))
+        steps_text = (
+            "1. Digite as informacoes do produto.\n\n"
+            "2. Escolha se o frete e FOB ou CIF.\n\n"
+            f"3. Selecione a filial: Natal ({CNPJ_RN}) ou Pernambuco ({CNPJ_PE}).\n\n"
+            "4. Clique em Confirmar item manual.\n\n"
+            "5. O item sera enviado para a tabela de resultados.\n\n"
+            "6. Exporte para Excel quando desejar."
         )
-        filial_combo.grid(row=filial_row, column=1, sticky="ew", padx=(0, 22), pady=8)
+        tk.Label(right_card, text=steps_text, justify="left", bg="#eef2ff", fg="#334155", font=("Segoe UI", 11), wraplength=430, padx=18, pady=18).grid(row=1, column=0, sticky="ew", padx=22)
+        tk.Label(right_card, text="Todos os botoes importantes permanecem visiveis no rodape do formulario. A rolagem foi mantida apenas como seguranca para telas menores.", justify="left", bg="#fff7e6", fg="#7c5a00", font=("Segoe UI", 10), wraplength=430, padx=16, pady=14).grid(row=2, column=0, sticky="ew", padx=22, pady=(18, 18))
 
-        btn_frame = tk.Frame(parent, bg=CARD)
-        btn_frame.grid(row=filial_row + 1, column=0, columnspan=2, sticky="w", padx=22, pady=(20, 22))
+        self._build_results_area(wrapper, row=2)
+        self.status_var.set("Modo manual ativo. Todos os campos e o botao principal estao visiveis.")
 
-        tk.Button(btn_frame, text="Confirmar item manual", command=self.confirm_manual_item, bg=PRIMARY, fg="white",
-                  activebackground=PRIMARY_DARK, activeforeground="white", relief="flat", font=("Segoe UI", 10, "bold"), padx=16, pady=10,
-                  cursor="hand2").pack(side="left")
-        tk.Button(btn_frame, text="Limpar campos", command=self.clear_manual_fields, bg="#e5e7eb", fg=TEXT,
-                  relief="flat", font=("Segoe UI", 10), padx=16, pady=10, cursor="hand2").pack(side="left", padx=10)
+    def _add_entry(self, parent, label, variable, row, col, span=1):
+        tk.Label(parent, text=label, bg="#ffffff", fg="#16253d", font=("Segoe UI", 11, "bold")).grid(row=row, column=col, sticky="w", pady=(10, 4))
+        entry = ttk.Entry(parent, textvariable=variable, font=("Segoe UI", 11))
+        entry.grid(row=row, column=col + 1, sticky="ew", pady=(10, 4), padx=(12, 0), columnspan=span)
+        return entry
 
-    def _build_manual_preview(self, parent):
-        tk.Label(parent, text="Resumo do modo manual", bg=CARD, fg=TEXT, font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=22, pady=(22, 10))
+    def show_attach(self):
+        self.clear_content()
+        wrapper = tk.Frame(self.content, bg="#eceff5")
+        wrapper.grid(row=0, column=0, sticky="nsew")
+        wrapper.grid_columnconfigure(0, weight=1)
+        wrapper.grid_rowconfigure(1, weight=1)
+        self.build_hero(wrapper, "Leitura automatica de orcamento", "Anexe um arquivo e o sistema vai tentar identificar CNPJ, frete, filial e itens automaticamente.")
 
-        summary = tk.Frame(parent, bg=SOFT)
-        summary.pack(fill="x", padx=22, pady=(0, 18))
+        body = tk.Frame(wrapper, bg="#eceff5")
+        body.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
+        body.grid_columnconfigure(0, weight=2)
+        body.grid_columnconfigure(1, weight=3)
+        body.grid_rowconfigure(0, weight=1)
 
-        textos = [
-            "1. Digite as informações do produto.",
-            "2. Escolha se o frete é FOB ou CIF.",
-            f"3. Selecione a filial: Natal ({CNPJ_RN}) ou Pernambuco ({CNPJ_PE}).",
-            "4. Clique em Confirmar item manual para enviar o item à grade.",
-            "5. Exporte o resultado para Excel quando desejar.",
-        ]
-        for txt in textos:
-            tk.Label(summary, text=txt, bg=SOFT, fg=TEXT, font=("Segoe UI", 10), anchor="w", justify="left").pack(fill="x", padx=16, pady=7)
+        left_card = tk.Frame(body, bg="#ffffff", bd=1, relief="solid")
+        left_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        left_card.grid_columnconfigure(1, weight=1)
 
-        tips = tk.Frame(parent, bg=WARNING)
-        tips.pack(fill="x", padx=22)
-        tk.Label(
-            tips,
-            text="Campos recomendados para melhor cálculo: NCM, IPI, ICMS e Preço Unitário. A quantidade padrão é 1.",
-            bg=WARNING,
-            fg=TEXT,
-            wraplength=500,
-            justify="left",
-            font=("Segoe UI", 10)
-        ).pack(fill="x", padx=16, pady=14)
+        tk.Label(left_card, text="Anexar orcamento", bg="#ffffff", fg="#10243e", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=22, pady=(18, 10))
+        self.budget_path_var = tk.StringVar()
+        ttk.Button(left_card, text="Selecionar arquivo", style="Primary.TButton", command=self.open_budget).grid(row=1, column=0, padx=(22, 12), pady=(0, 12), sticky="w")
+        ttk.Entry(left_card, textvariable=self.budget_path_var, font=("Segoe UI", 10)).grid(row=1, column=1, padx=(0, 22), pady=(0, 12), sticky="ew")
 
-    def clear_manual_fields(self):
-        self.product_name_var.set("")
-        self.manual_ncm_var.set("")
-        self.manual_ipi_var.set("0")
-        self.manual_icms_var.set("0")
-        self.manual_preco_var.set("0")
-        self.manual_qtde_var.set("1")
-        self.manual_frete_var.set("CIF")
-        self.manual_filial_var.set(f"Natal - {CNPJ_RN}")
-        self.status_var.set("Campos manuais limpos.")
+        self.detect_cnpj_var = tk.StringVar(value="CNPJ: -")
+        self.detect_mode_var = tk.StringVar(value="Compra para: -")
+        self.detect_frete_var = tk.StringVar(value="Frete: -")
+        self.total_itens_var = tk.StringVar(value="Itens: 0")
+        info_vars = [self.detect_cnpj_var, self.detect_mode_var, self.detect_frete_var, self.total_itens_var]
+        for idx, var in enumerate(info_vars, start=2):
+            tk.Label(left_card, textvariable=var, anchor="w", bg="#f6f8fc", fg="#16253d", font=("Segoe UI", 10, "bold"), padx=12, pady=10).grid(row=idx, column=0, columnspan=2, sticky="ew", padx=22, pady=(0, 8))
 
-    def confirm_manual_item(self):
-        produto = self.product_name_var.get().strip()
-        ncm = re.sub(r"\D", "", self.manual_ncm_var.get())
-        if not produto:
-            messagebox.showwarning(APP_TITLE, "Informe o nome do produto.")
-            return
-        if not ncm:
-            messagebox.showwarning(APP_TITLE, "Informe um NCM válido.")
-            return
+        tk.Label(left_card, text="Formatos aceitos: PDF, XLSX, XLSM, CSV, PNG, JPG e JPEG.", bg="#fff4cc", fg="#5b4a00", font=("Segoe UI", 10), padx=12, pady=10).grid(row=6, column=0, columnspan=2, sticky="ew", padx=22, pady=(8, 18))
 
+        right_card = tk.Frame(body, bg="#ffffff", bd=1, relief="solid")
+        right_card.grid(row=0, column=1, sticky="nsew")
+        right_card.grid_columnconfigure(0, weight=1)
+        tk.Label(right_card, text="Como funciona o preenchimento automatico", bg="#ffffff", fg="#10243e", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w", padx=22, pady=(18, 10))
+        proc = (
+            "1. Clique em Selecionar arquivo.\n\n"
+            "2. Escolha o orcamento em PDF, Excel, CSV ou imagem.\n\n"
+            "3. O sistema tenta localizar CNPJ da filial, tipo de frete e tabela de itens.\n\n"
+            "4. Cada item identificado e enviado para a grade de resultados.\n\n"
+            "5. Se o arquivo tiver mais de um item, todos sao listados para conferencia.\n\n"
+            "6. Ao final, exporte a planilha em Excel formatado."
+        )
+        tk.Label(right_card, text=proc, justify="left", bg="#eef2ff", fg="#334155", font=("Segoe UI", 11), wraplength=640, padx=18, pady=18).grid(row=1, column=0, sticky="ew", padx=22)
+
+        model = (
+            "Cabecalhos recomendados no arquivo: Produto, NCM, IPI, ICMS, Frete, Preco, Quantidade e Codigo.\n\n"
+            "Quanto mais estruturado vier o orcamento, melhor a leitura automatica."
+        )
+        tk.Label(right_card, text=model, justify="left", bg="#fff7e6", fg="#7c5a00", font=("Segoe UI", 10), wraplength=640, padx=16, pady=14).grid(row=2, column=0, sticky="ew", padx=22, pady=(18, 18))
+
+        self._build_results_area(wrapper, row=2)
+        self.status_var.set("Modo de anexo ativo. Selecione um arquivo para leitura automatica.")
+
+    def _build_results_area(self, parent, row):
+        box = tk.Frame(parent, bg="#ffffff", bd=1, relief="solid")
+        box.grid(row=row, column=0, sticky="nsew", pady=(14, 0))
+        box.grid_columnconfigure(0, weight=1)
+        box.grid_rowconfigure(1, weight=1)
+
+        top = tk.Frame(box, bg="#ffffff")
+        top.grid(row=0, column=0, sticky="ew")
+        tk.Label(top, text="Resultados", bg="#ffffff", fg="#10243e", font=("Segoe UI", 16, "bold")).pack(side="left", padx=22, pady=14)
+        self.item_combo_var = tk.StringVar()
+        self.item_combo = ttk.Combobox(top, textvariable=self.item_combo_var, state="readonly", width=90)
+        self.item_combo.pack(side="right", padx=22)
+        self.item_combo.bind("<<ComboboxSelected>>", self.on_item_selected)
+
+        table_frame = tk.Frame(box, bg="#ffffff")
+        table_frame.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        table_frame.grid_columnconfigure(0, weight=1)
+        table_frame.grid_rowconfigure(0, weight=1)
+
+        cols = ("idx", "codigo", "produto", "qtde", "ncm", "preco", "icms", "ipi", "frete", "r", "s", "t")
+        self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=14)
+        headers = {
+            "idx": "#", "codigo": "Codigo", "produto": "Produto", "qtde": "Qtde", "ncm": "NCM",
+            "preco": "Preco Unitario", "icms": "ICMS", "ipi": "IPI", "frete": "Frete",
+            "r": "R / Filial 4", "s": "S / Filial 2", "t": "T / Filial 3 e 5",
+        }
+        widths = {"idx": 45, "codigo": 90, "produto": 620, "qtde": 60, "ncm": 100, "preco": 115, "icms": 75, "ipi": 75, "frete": 70, "r": 130, "s": 130, "t": 140}
+        for col in cols:
+            self.tree.heading(col, text=headers[col])
+            self.tree.column(col, width=widths[col], anchor="center")
+        self.tree.column("produto", anchor="w")
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        self.tree.tag_configure("price_highlight", background="#fff4cc")
+        self.tree.tag_configure("normal_row", background="#ffffff")
+        yscroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        yscroll.grid(row=0, column=1, sticky="ns")
+        self.tree.configure(yscrollcommand=yscroll.set)
+        self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
+
+    def limpar_manual(self):
+        self.manual_nome.set("")
+        self.manual_ncm.set("")
+        self.manual_ipi.set("0")
+        self.manual_icms.set("7")
+        self.manual_preco.set("")
+        self.manual_qtde.set("1")
+        self.manual_frete.set("FOB")
+        self.manual_filial.set(f"Natal - {CNPJ_RN}")
+        self.status_var.set("Campos do modo manual limpos.")
+
+    def confirmar_manual(self):
         try:
+            nome = self.manual_nome.get().strip()
+            ncm = re.sub(r"\D", "", self.manual_ncm.get())
+            if not nome:
+                raise ValueError("Informe o Nome do Produto.")
+            if not ncm:
+                raise ValueError("Informe um NCM valido.")
+
             item = {
                 "codigo": "MANUAL",
-                "descricao": produto,
+                "descricao": nome,
                 "ncm": ncm,
-                "ipi": parse_percent(self.manual_ipi_var.get()),
-                "icms": parse_percent(self.manual_icms_var.get()),
-                "frete": self.manual_frete_var.get() or "CIF",
-                "preco": to_decimal(self.manual_preco_var.get()),
-                "qtde": max(int(to_decimal(self.manual_qtde_var.get())), 1),
-                "compra_para": "RN" if self.manual_filial_var.get().startswith("Natal") else "PE",
+                "ipi": parse_percent(self.manual_ipi.get()),
+                "icms": parse_percent(self.manual_icms.get()),
+                "frete": self.manual_frete.get(),
+                "preco": to_decimal(self.manual_preco.get()),
+                "qtde": int(to_decimal(self.manual_qtde.get()) or Decimal("1")),
             }
+            if item["preco"] <= 0:
+                raise ValueError("Informe um Preco Unitario maior que zero.")
+            if item["qtde"] <= 0:
+                item["qtde"] = 1
+
+            self.items = [item]
+            compra_para = "RN" if "Natal" in self.manual_filial.get() else "PE"
+            if not hasattr(self, "detect_mode_var"):
+                self.detect_mode_var = tk.StringVar(value="Compra para: -")
+            self.detect_mode_var.set(f"Compra para: {compra_para}")
+            self._populate_combo_labels()
+            self.calcular_orcamento_inteiro()
+            self.status_var.set("Item manual gerado com sucesso.")
         except Exception as e:
-            messagebox.showerror(APP_TITLE, f"Erro ao validar dados manuais:\n{e}")
-            return
+            messagebox.showerror(APP_TITLE, str(e))
 
-        self.items = [item]
-        self.current_file = "Entrada manual"
-        self.budget_path_var.set(self.current_file)
-        self.detect_cnpj_var.set(f"CNPJ identificado: {CNPJ_RN if item['compra_para'] == 'RN' else CNPJ_PE}")
-        self.detect_mode_var.set(f"Compra para: {item['compra_para']}")
-        self.detect_frete_var.set(f"Frete identificado: {item['frete']}")
-        self.total_itens_var.set("Itens identificados: 1")
-        self.show_results_screen(manual_mode=True)
-        self.calcular_orcamento_inteiro(compra_para_override=item["compra_para"])
-        self.status_var.set("Item manual processado com sucesso.")
-
-    def show_auto_mode(self):
-        self.current_mode = "auto"
-        self.clear_content()
-
-        wrapper = tk.Frame(self.content, bg=BG)
-        wrapper.pack(fill="both", expand=True)
-        wrapper.grid_columnconfigure(0, weight=1)
-        wrapper.grid_rowconfigure(2, weight=1)
-
-        intro = ModernCard(wrapper)
-        intro.grid(row=0, column=0, sticky="ew", pady=(0, 12))
-        tk.Label(intro, text="Anexar orçamento para preenchimento automático", bg=CARD, fg=TEXT, font=("Segoe UI", 18, "bold")).pack(anchor="w", padx=24, pady=(20, 8))
-        tk.Label(
-            intro,
-            text="Selecione um arquivo em Excel, CSV, PDF ou imagem. O sistema localizará cabeçalhos, tentará identificar CNPJ, frete e filial, e listará os itens encontrados.",
-            bg=CARD, fg=MUTED, font=("Segoe UI", 10), wraplength=1150, justify="left"
-        ).pack(anchor="w", padx=24, pady=(0, 18))
-
-        attach = ModernCard(wrapper)
-        attach.grid(row=1, column=0, sticky="ew", pady=(0, 12))
-        attach.grid_columnconfigure(1, weight=1)
-
-        tk.Label(attach, text="Arquivo do orçamento", bg=CARD, fg=TEXT, font=("Segoe UI", 12, "bold")).grid(row=0, column=0, sticky="w", padx=22, pady=(20, 8))
-        ttk.Button(attach, text="Selecionar arquivo", command=self.open_budget, style="Primary.TButton").grid(row=1, column=0, padx=22, pady=(0, 18), sticky="w")
-        ttk.Entry(attach, textvariable=self.budget_path_var, style="Clean.TEntry").grid(row=1, column=1, sticky="ew", padx=(0, 22), pady=(0, 18))
-
-        info = tk.Frame(attach, bg=CARD)
-        info.grid(row=2, column=0, columnspan=2, sticky="ew", padx=22, pady=(0, 22))
-        info.grid_columnconfigure((0, 1, 2, 3), weight=1)
-
-        self._info_box(info, self.detect_cnpj_var, 0)
-        self._info_box(info, self.detect_mode_var, 1)
-        self._info_box(info, self.detect_frete_var, 2)
-        self._info_box(info, self.total_itens_var, 3)
-
-        tutorial = ModernCard(wrapper)
-        tutorial.grid(row=2, column=0, sticky="nsew")
-        tk.Label(tutorial, text="Passo a passo do preenchimento automático", bg=CARD, fg=TEXT, font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=24, pady=(22, 12))
-        passos = [
-            "1. Clique em Selecionar arquivo e escolha o orçamento.",
-            "2. O sistema lê arquivos .xlsx, .xlsm, .xls, .csv, .pdf e imagens .png/.jpg/.jpeg.",
-            "3. O processo procura colunas como Produto, NCM, IPI, ICMS, Preço, Qtde e Frete.",
-            "4. Se encontrar CNPJ 18.217.682/0004-05, classifica a compra como RN. Se encontrar 18.217.682/0001-54, classifica como PE.",
-            "5. Após a leitura, a tela de resultados é aberta com todos os itens identificados e precificados.",
-            "6. Depois você pode exportar a tabela final para Excel formatado.",
-        ]
-        for passo in passos:
-            tk.Label(tutorial, text=passo, bg=CARD, fg=TEXT, font=("Segoe UI", 10), anchor="w", justify="left", wraplength=1180).pack(fill="x", padx=24, pady=7)
-
-        modelo = tk.Frame(tutorial, bg=SOFT)
-        modelo.pack(fill="x", padx=24, pady=(18, 24))
-        tk.Label(modelo, text="Modelo ideal de colunas do arquivo: Produto | NCM | IPI | ICMS | Preço | Qtde | Frete | Código", bg=SOFT, fg=TEXT, font=("Segoe UI", 10, "bold"), wraplength=1160, justify="left").pack(anchor="w", padx=16, pady=(14, 6))
-        tk.Label(modelo, text="Quanto mais organizado estiver o orçamento, maior a chance de o preenchimento automático acertar todos os itens sem ajustes manuais.", bg=SOFT, fg=MUTED, font=("Segoe UI", 10), wraplength=1160, justify="left").pack(anchor="w", padx=16, pady=(0, 14))
-
-        self.status_var.set("Modo automático ativo. Anexe um orçamento para iniciar a leitura.")
-
-    def _info_box(self, parent, text_var, col):
-        box = tk.Frame(parent, bg="#f4f6fb", highlightthickness=1, highlightbackground=BORDER)
-        box.grid(row=0, column=col, sticky="ew", padx=6)
-        tk.Label(box, textvariable=text_var, bg="#f4f6fb", fg=TEXT, font=("Segoe UI", 10, "bold"), anchor="w", padx=12, pady=12).pack(fill="both")
+    def _populate_combo_labels(self):
+        labels = []
+        for i, item in enumerate(self.items, start=1):
+            desc = item.get("descricao", "") or "(sem descricao)"
+            labels.append(f"{i}. {item.get('codigo','')} | Qtde {item.get('qtde',1)} | {desc[:90]} | NCM: {item.get('ncm','')}")
+        if hasattr(self, "item_combo"):
+            self.item_combo["values"] = labels
+            if labels:
+                self.item_combo.current(0)
 
     def open_budget(self):
         path = filedialog.askopenfilename(
-            title="Selecione o arquivo do orçamento",
+            title="Selecione o arquivo do orcamento",
             filetypes=[
-                ("Arquivos suportados", "*.pdf *.xlsx *.xlsm *.xls *.csv *.png *.jpg *.jpeg"),
+                ("Arquivos suportados", "*.pdf *.xlsx *.xlsm *.csv *.png *.jpg *.jpeg"),
                 ("PDF", "*.pdf"),
-                ("Excel", "*.xlsx *.xlsm *.xls"),
+                ("Excel", "*.xlsx *.xlsm"),
                 ("CSV", "*.csv"),
                 ("Imagem", "*.png *.jpg *.jpeg"),
             ],
@@ -792,132 +750,23 @@ class App(tk.Tk):
             return
         try:
             data = self.reader.read(path)
-            self.current_file = path
             self.budget_path_var.set(path)
-            self.detect_cnpj_var.set(f"CNPJ identificado: {data.get('cnpj') or 'não identificado'}")
-            self.detect_mode_var.set(f"Compra para: {data.get('compra_para') or 'não identificada'}")
-            self.detect_frete_var.set(f"Frete identificado: {data.get('frete') or '-'}")
+            self.detect_cnpj_var.set(f"CNPJ: {data.get('cnpj') or 'nao identificado'}")
+            self.detect_mode_var.set(f"Compra para: {data.get('compra_para') or 'nao identificada'}")
+            self.detect_frete_var.set(f"Frete: {data.get('frete') or '-'}")
             self.items = data.get("items", [])
-
             if not self.items:
-                raise ValueError("Não consegui identificar itens automaticamente nesse arquivo.")
-
-            self.total_itens_var.set(f"Itens identificados: {len(self.items)}")
-            self.show_results_screen(manual_mode=False)
-            self.calcular_orcamento_inteiro(compra_para_override=data.get("compra_para", ""))
-            self.status_var.set(f"Arquivo lido com sucesso. Itens únicos encontrados: {len(self.items)}.")
-
+                raise ValueError("Nao consegui identificar itens automaticamente nesse arquivo.")
+            self.total_itens_var.set(f"Itens: {len(self.items)}")
+            self._populate_combo_labels()
+            self.calcular_orcamento_inteiro()
+            self.status_var.set(f"Arquivo lido com sucesso. Itens encontrados: {len(self.items)}.")
         except Exception as e:
             messagebox.showerror(APP_TITLE, str(e))
 
-    def show_results_screen(self, manual_mode=False):
-        self.current_mode = "results"
-        self.clear_content()
-
-        main = tk.Frame(self.content, bg=BG)
-        main.pack(fill="both", expand=True)
-        main.grid_columnconfigure(0, weight=1)
-        main.grid_rowconfigure(2, weight=1)
-
-        top = ModernCard(main)
-        top.grid(row=0, column=0, sticky="ew", pady=(0, 12))
-        top.grid_columnconfigure(1, weight=1)
-
-        title_text = "Resultado da entrada manual" if manual_mode else "Resultado do orçamento anexado"
-        tk.Label(top, text=title_text, bg=CARD, fg=TEXT, font=("Segoe UI", 18, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=22, pady=(20, 8))
-
-        origem = self.current_file or self.budget_path_var.get() or "-"
-        tk.Label(top, text="Origem dos dados:", bg=CARD, fg=TEXT, font=("Segoe UI", 10, "bold")).grid(row=1, column=0, sticky="w", padx=22)
-        ttk.Entry(top, textvariable=tk.StringVar(value=origem), style="Clean.TEntry").grid(row=1, column=1, sticky="ew", padx=(0, 22), pady=(0, 12))
-
-        info = tk.Frame(top, bg=CARD)
-        info.grid(row=2, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 18))
-        info.grid_columnconfigure((0, 1, 2, 3), weight=1)
-        self._info_box(info, self.detect_cnpj_var, 0)
-        self._info_box(info, self.detect_mode_var, 1)
-        self._info_box(info, self.detect_frete_var, 2)
-        self._info_box(info, self.total_itens_var, 3)
-
-        actions = ModernCard(main)
-        actions.grid(row=1, column=0, sticky="ew", pady=(0, 12))
-        actions.grid_columnconfigure(0, weight=1)
-
-        left = tk.Frame(actions, bg=CARD)
-        left.grid(row=0, column=0, sticky="w", padx=22, pady=18)
-        tk.Label(left, text="Item selecionado:", bg=CARD, fg=TEXT, font=("Segoe UI", 10, "bold")).pack(side="left")
-        self.item_combo_var = tk.StringVar()
-        self.item_combo = ttk.Combobox(left, textvariable=self.item_combo_var, state="readonly", width=88, style="Clean.TCombobox")
-        self.item_combo.pack(side="left", padx=(10, 0))
-        self.item_combo.bind("<<ComboboxSelected>>", self.on_item_selected)
-
-        labels = []
-        for i, item in enumerate(self.items, start=1):
-            desc = item.get("descricao", "") or "(sem descrição)"
-            labels.append(f"{i}. {item.get('codigo', '')} | Qtde {item.get('qtde', 1)} | {desc[:90]} | NCM: {item.get('ncm', '')}")
-        self.item_combo["values"] = labels
-        if labels:
-            self.item_combo.current(0)
-
-        right = tk.Frame(actions, bg=CARD)
-        right.grid(row=0, column=1, sticky="e", padx=22, pady=18)
-        ttk.Button(right, text="Recalcular", command=self.calcular_orcamento_inteiro, style="Secondary.TButton").pack(side="left", padx=(0, 8))
-        ttk.Button(right, text="Exportar Excel", command=self.exportar_excel, style="Primary.TButton").pack(side="left")
-
-        table_box = ModernCard(main)
-        table_box.grid(row=2, column=0, sticky="nsew")
-        table_box.grid_columnconfigure(0, weight=1)
-        table_box.grid_rowconfigure(1, weight=1)
-
-        tk.Label(table_box, text="Todos os itens precificados", bg=CARD, fg=TEXT, font=("Segoe UI", 15, "bold")).grid(row=0, column=0, sticky="w", padx=22, pady=(20, 8))
-
-        cols = ("idx", "codigo", "produto", "qtde", "ncm", "preco", "icms", "ipi", "frete", "r", "s", "t")
-        self.tree = ttk.Treeview(table_box, columns=cols, show="headings", height=22)
-
-        headers = {
-            "idx": "#",
-            "codigo": "Código",
-            "produto": "Produto",
-            "qtde": "Qtde",
-            "ncm": "NCM",
-            "preco": "Preço Unitário",
-            "icms": "ICMS",
-            "ipi": "IPI",
-            "frete": "Frete",
-            "r": "R / Filial 4",
-            "s": "S / Filial 2",
-            "t": "T / Filial 3 e 5",
-        }
-        widths = {
-            "idx": 40,
-            "codigo": 90,
-            "produto": 660,
-            "qtde": 60,
-            "ncm": 100,
-            "preco": 120,
-            "icms": 75,
-            "ipi": 75,
-            "frete": 75,
-            "r": 130,
-            "s": 130,
-            "t": 140,
-        }
-
-        for col in cols:
-            self.tree.heading(col, text=headers[col])
-            self.tree.column(col, width=widths[col], anchor="center")
-        self.tree.column("produto", anchor="w")
-        self.tree.grid(row=1, column=0, sticky="nsew", padx=(22, 0), pady=(0, 22))
-        self.tree.tag_configure("price_highlight", background="#fff8db")
-        self.tree.tag_configure("normal_row", background="#ffffff")
-        self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
-
-        yscroll = ttk.Scrollbar(table_box, orient="vertical", command=self.tree.yview)
-        yscroll.grid(row=1, column=1, sticky="ns", pady=(0, 22), padx=(0, 22))
-        self.tree.configure(yscrollcommand=yscroll.set)
-
     def on_item_selected(self, event=None):
         idx = self.item_combo.current()
-        if idx >= 0 and hasattr(self, "tree") and self.tree.get_children():
+        if idx >= 0 and self.tree.get_children():
             self.tree.selection_set(self.tree.get_children()[idx])
             self.tree.see(self.tree.get_children()[idx])
 
@@ -929,53 +778,40 @@ class App(tk.Tk):
         if not values:
             return
         idx = int(values[0]) - 1
-        if hasattr(self, "item_combo") and 0 <= idx < len(self.items):
+        if 0 <= idx < len(self.items):
             self.item_combo.current(idx)
 
-    def calcular_orcamento_inteiro(self, compra_para_override=""):
+    def calcular_orcamento_inteiro(self):
         if not self.items:
-            messagebox.showwarning(APP_TITLE, "Selecione primeiro um arquivo ou informe um item manual.")
-            return
-        if not hasattr(self, "tree"):
+            messagebox.showwarning(APP_TITLE, "Nao ha itens para calcular.")
             return
 
-        for item_id in self.tree.get_children():
-            self.tree.delete(item_id)
+        if hasattr(self, "tree"):
+            for item_id in self.tree.get_children():
+                self.tree.delete(item_id)
 
         self.current_results = []
-        compra_para = (compra_para_override or "").upper()
+        compra_para = ""
+        cnpj_text = self.detect_mode_var.get().upper() if hasattr(self, "detect_mode_var") else ""
+        if "RN" in cnpj_text:
+            compra_para = "RN"
+        elif "PE" in cnpj_text:
+            compra_para = "PE"
+        elif len(self.items) == 1 and hasattr(self, "manual_filial"):
+            compra_para = "RN" if "Natal" in self.manual_filial.get() else "PE"
+
         if compra_para not in ("RN", "PE"):
-            mode_text = self.detect_mode_var.get().upper()
-            if "RN" in mode_text:
-                compra_para = "RN"
-            elif "PE" in mode_text:
-                compra_para = "PE"
+            raise ValueError("Nao foi possivel identificar automaticamente RN ou PE.")
 
         for idx, item in enumerate(self.items, start=1):
-            item_compra_para = (item.get("compra_para") or compra_para).upper()
-            if item_compra_para not in ("RN", "PE"):
-                self.tree.insert(
-                    "",
-                    "end",
-                    values=(idx, item.get("codigo", ""), "ERRO: filial não identificada para este item", item.get("qtde", 1), item.get("ncm", ""), "", "", "", item.get("frete", ""), "", "", ""),
-                    tags=("normal_row",)
-                )
-                continue
             try:
-                result = self.engine.calcular(
-                    item_compra_para,
-                    item["preco"],
-                    item["ncm"],
-                    item["icms"],
-                    item["ipi"],
-                    item["frete"],
-                )
+                result = self.engine.calcular(compra_para, item["preco"], item["ncm"], item["icms"], item["ipi"], item["frete"])
                 record = {
                     "idx": idx,
                     "codigo": item.get("codigo", ""),
-                    "produto": item.get("descricao", ""),
-                    "qtde": item.get("qtde", 1),
-                    "ncm": item.get("ncm", ""),
+                    "produto": item["descricao"],
+                    "qtde": item["qtde"],
+                    "ncm": item["ncm"],
                     "preco": item["preco"],
                     "icms": item["icms"],
                     "ipi": item["ipi"],
@@ -983,41 +819,24 @@ class App(tk.Tk):
                     "r": result["r"],
                     "s": result["s"],
                     "t": result["t"],
-                    "compra_para": item_compra_para,
                 }
                 self.current_results.append(record)
                 self.tree.insert(
-                    "",
-                    "end",
-                    values=(
-                        record["idx"],
-                        record["codigo"],
-                        record["produto"],
-                        record["qtde"],
-                        record["ncm"],
-                        format_money(record["preco"]),
-                        format_pct(record["icms"]),
-                        format_pct(record["ipi"]),
-                        record["frete"],
-                        format_money(record["r"]),
-                        format_money(record["s"]),
-                        format_money(record["t"]),
-                    ),
+                    "", "end",
+                    values=(record["idx"], record["codigo"], record["produto"], record["qtde"], record["ncm"], format_money(record["preco"]), format_pct(record["icms"]), format_pct(record["ipi"]), record["frete"], format_money(record["r"]), format_money(record["s"]), format_money(record["t"])),
                     tags=("price_highlight",)
                 )
             except Exception as e:
                 self.tree.insert(
-                    "",
-                    "end",
+                    "", "end",
                     values=(idx, item.get("codigo", ""), f"ERRO: {str(e)}", item.get("qtde", 1), item.get("ncm", ""), "", "", "", item.get("frete", ""), "", "", ""),
                     tags=("normal_row",)
                 )
-
-        self.status_var.set(f"Itens processados: {len(self.items)}. Linhas calculadas com sucesso: {len(self.current_results)}.")
+        self.status_var.set(f"Precificacao concluida. Total de itens: {len(self.items)}.")
 
     def exportar_excel(self):
         if not self.current_results:
-            messagebox.showwarning(APP_TITLE, "Calcule os itens antes de exportar.")
+            messagebox.showwarning(APP_TITLE, "Calcule pelo menos um item antes de exportar.")
             return
 
         filepath = filedialog.asksaveasfilename(
@@ -1032,36 +851,19 @@ class App(tk.Tk):
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Resultado"
-
-        headers = ["Item", "Codigo", "Produto", "Qtde", "NCM", "Preco Unitario", "ICMS", "IPI", "Frete", "Compra Para", "Resultado R", "Resultado S", "Resultado T"]
+        headers = ["Item", "Codigo", "Produto", "Qtde", "NCM", "Preco Unitario", "ICMS", "IPI", "Frete", "Resultado R", "Resultado S", "Resultado T"]
         ws.append(headers)
-
         for rec in self.current_results:
             ws.append([
-                rec["idx"],
-                rec["codigo"],
-                rec["produto"],
-                rec["qtde"],
-                rec["ncm"],
-                float(q2(rec["preco"])),
-                float(rec["icms"]),
-                float(rec["ipi"]),
-                rec["frete"],
-                rec["compra_para"],
-                float(q2(rec["r"])),
-                float(q2(rec["s"])),
-                float(q2(rec["t"])),
+                rec["idx"], rec["codigo"], rec["produto"], rec["qtde"], rec["ncm"],
+                float(q2(rec["preco"])), float(rec["icms"]), float(rec["ipi"]), rec["frete"],
+                float(q2(rec["r"])), float(q2(rec["s"])), float(q2(rec["t"])),
             ])
 
         header_fill = PatternFill(fill_type="solid", fgColor="6F2DBD")
         header_font = Font(color="FFFFFF", bold=True)
-        price_fill = PatternFill(fill_type="solid", fgColor="FFF8DB")
-        border = Border(
-            left=Side(style="thin", color="D9D9D9"),
-            right=Side(style="thin", color="D9D9D9"),
-            top=Side(style="thin", color="D9D9D9"),
-            bottom=Side(style="thin", color="D9D9D9"),
-        )
+        price_fill = PatternFill(fill_type="solid", fgColor="FFF4CC")
+        border = Border(left=Side(style="thin", color="D9D9D9"), right=Side(style="thin", color="D9D9D9"), top=Side(style="thin", color="D9D9D9"), bottom=Side(style="thin", color="D9D9D9"))
 
         for cell in ws[1]:
             cell.fill = header_fill
@@ -1069,9 +871,8 @@ class App(tk.Tk):
             cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.border = border
 
-        money_cols = {"F", "K", "L", "M"}
+        money_cols = {"F", "J", "K", "L"}
         pct_cols = {"G", "H"}
-
         for row in ws.iter_rows(min_row=2):
             for cell in row:
                 cell.border = border
@@ -1088,7 +889,7 @@ class App(tk.Tk):
             for cell in col:
                 if cell.value is not None:
                     max_len = max(max_len, len(str(cell.value)))
-            ws.column_dimensions[col_letter].width = min(max_len + 3, 65)
+            ws.column_dimensions[col_letter].width = min(max_len + 3, 70)
 
         ws.freeze_panes = "A2"
         wb.save(filepath)
