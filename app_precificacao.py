@@ -406,6 +406,8 @@ class App(tk.Tk):
         self.psd_s_var = tk.StringVar(value="S / Filial 4 Fora RN / Filial 2 Fora PE: -")
         self.psd_t_var = tk.StringVar(value="T / Filial 3 e 5: -")
 
+        self.attach_filial_manual = tk.StringVar(value=f"Natal - {CNPJ_RN}")
+
         self._build_styles()
         self._build_layout()
         self.show_home()
@@ -628,6 +630,105 @@ class App(tk.Tk):
         self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
         self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
 
+    def _mostrar_popup_resumo_tabela(self, titulo="Resumo da simulacao"):
+        if not self.current_results:
+            messagebox.showwarning(APP_TITLE, "Nao ha resultados para exibir.")
+            return
+
+        popup = tk.Toplevel(self)
+        popup.title(titulo)
+        popup.geometry("1180x620")
+        popup.minsize(980, 500)
+        popup.transient(self)
+        popup.grab_set()
+        popup.configure(bg="#f4f6fb")
+
+        header = tk.Frame(popup, bg="#6f2dbd", height=70)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        tk.Label(
+            header,
+            text=titulo,
+            bg="#6f2dbd",
+            fg="white",
+            font=("Segoe UI", 17, "bold"),
+        ).pack(side="left", padx=20, pady=16)
+
+        info = tk.Frame(popup, bg="#f4f6fb")
+        info.pack(fill="x", padx=16, pady=(12, 8))
+
+        tk.Label(
+            info,
+            text=f"Itens processados: {len(self.current_results)}",
+            bg="#f4f6fb",
+            fg="#334155",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="left")
+
+        table_wrap = tk.Frame(popup, bg="#f4f6fb")
+        table_wrap.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+        table_wrap.grid_columnconfigure(0, weight=1)
+        table_wrap.grid_rowconfigure(0, weight=1)
+
+        cols = ("idx", "produto", "qtde", "ncm", "preco", "r", "s", "t")
+        tree = ttk.Treeview(table_wrap, columns=cols, show="headings", height=14)
+
+        headers = {
+            "idx": "#",
+            "produto": "Produto",
+            "qtde": "Qtde",
+            "ncm": "NCM",
+            "preco": "Preco Unitario",
+            "r": "PSD R / Filial 4",
+            "s": "PSD S",
+            "t": "PSD T / Filial 3 e 5",
+        }
+        widths = {
+            "idx": 45,
+            "produto": 380,
+            "qtde": 60,
+            "ncm": 100,
+            "preco": 120,
+            "r": 150,
+            "s": 180,
+            "t": 180,
+        }
+
+        for col in cols:
+            tree.heading(col, text=headers[col])
+            tree.column(col, width=widths[col], anchor="center")
+
+        tree.column("produto", anchor="w")
+        tree.grid(row=0, column=0, sticky="nsew")
+
+        yscroll = ttk.Scrollbar(table_wrap, orient="vertical", command=tree.yview)
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll = ttk.Scrollbar(table_wrap, orient="horizontal", command=tree.xview)
+        xscroll.grid(row=1, column=0, sticky="ew")
+        tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+
+        for rec in self.current_results:
+            tree.insert(
+                "",
+                "end",
+                values=(
+                    rec["idx"],
+                    rec["produto"],
+                    rec["qtde"],
+                    rec["ncm"],
+                    format_money(rec["preco"]),
+                    format_money(rec["r"]),
+                    format_money(rec["s"]),
+                    format_money(rec["t"]),
+                ),
+            )
+
+        footer = tk.Frame(popup, bg="#f4f6fb")
+        footer.pack(fill="x", padx=16, pady=(0, 16))
+
+        ttk.Button(footer, text="Fechar", style="Primary.TButton", command=popup.destroy).pack(side="right")
+
     def show_manual(self):
         self.clear_content()
         wrapper = tk.Frame(self.content, bg="#eceff5")
@@ -703,7 +804,7 @@ class App(tk.Tk):
 
         tk.Label(
             left_card,
-            text="Campos IPI e ICMS agora iniciam em branco. O botao Limpar campos zera tudo e volta Qtde = 1.",
+            text="Campos IPI e ICMS iniciam em branco. O botao Limpar campos zera tudo e volta Qtde = 1.",
             bg="#fff4cc",
             fg="#5b4a00",
             font=("Segoe UI", 10),
@@ -820,13 +921,33 @@ class App(tk.Tk):
 
         tk.Label(
             left_card,
-            text="1. Selecione o arquivo.  2. Confira os dados detectados.  3. Clique em Gerar simulacao.",
+            text="Filial manual (usar quando o sistema nao identificar automaticamente)",
+            bg="#ffffff",
+            fg="#16253d",
+            font=("Segoe UI", 10, "bold"),
+        ).grid(row=6, column=0, columnspan=2, sticky="w", padx=22, pady=(8, 4))
+
+        attach_filial_cb = ttk.Combobox(
+            left_card,
+            textvariable=self.attach_filial_manual,
+            state="readonly",
+            width=46
+        )
+        attach_filial_cb["values"] = [
+            f"Natal - {CNPJ_RN}",
+            f"Pernambuco - {CNPJ_PE}",
+        ]
+        attach_filial_cb.grid(row=7, column=0, columnspan=2, sticky="ew", padx=22, pady=(0, 8))
+
+        tk.Label(
+            left_card,
+            text="1. Selecione o arquivo.  2. Confira os dados detectados.  3. Se nao identificar RN/PE, escolha a filial acima.  4. Clique em Gerar simulacao.",
             bg="#fff4cc",
             fg="#5b4a00",
             font=("Segoe UI", 10),
             padx=12,
             pady=10,
-        ).grid(row=6, column=0, columnspan=2, sticky="ew", padx=22, pady=(8, 18))
+        ).grid(row=8, column=0, columnspan=2, sticky="ew", padx=22, pady=(8, 18))
 
         right_card = tk.Frame(body, bg="#ffffff", bd=1, relief="solid")
         right_card.grid(row=0, column=1, sticky="nsew")
@@ -937,7 +1058,7 @@ class App(tk.Tk):
             self.detect_mode_var = tk.StringVar(value=f"Compra para: {compra_para}")
             self._populate_combo_labels()
             self.calcular_orcamento_inteiro()
-            messagebox.showinfo(APP_TITLE, "Simulacao manual gerada com sucesso.")
+            self._mostrar_popup_resumo_tabela("Resumo da simulacao manual")
             self.status_var.set("Item manual gerado com sucesso.")
         except Exception as e:
             messagebox.showerror(APP_TITLE, str(e))
@@ -971,13 +1092,29 @@ class App(tk.Tk):
         try:
             if not self.budget_data:
                 raise ValueError("Selecione primeiro um arquivo de orcamento.")
+
             self.items = self.budget_data.get("items", [])
             if not self.items:
                 raise ValueError("Nao consegui identificar itens automaticamente nesse arquivo.")
+
+            compra_detectada = self.budget_data.get("compra_para", "")
+            if compra_detectada not in ("RN", "PE"):
+                compra_detectada = "RN" if "Natal" in self.attach_filial_manual.get() else "PE"
+
+            if not hasattr(self, "detect_mode_var"):
+                self.detect_mode_var = tk.StringVar(value="Compra para: -")
+            self.detect_mode_var.set(f"Compra para: {compra_detectada}")
+
+            if not hasattr(self, "detect_cnpj_var"):
+                self.detect_cnpj_var = tk.StringVar(value="CNPJ: -")
+            self.detect_cnpj_var.set(f"CNPJ: {CNPJ_RN if compra_detectada == 'RN' else CNPJ_PE}")
+
             self._populate_combo_labels()
             self.calcular_orcamento_inteiro()
-            messagebox.showinfo(APP_TITLE, f"Simulacao gerada com sucesso. Itens processados: {len(self.items)}")
+            self._mostrar_popup_resumo_tabela("Resumo da simulacao do orcamento")
+
             self.status_var.set(f"Arquivo processado com sucesso. Itens encontrados: {len(self.items)}.")
+
         except Exception as e:
             messagebox.showerror(APP_TITLE, str(e))
 
@@ -1087,7 +1224,15 @@ class App(tk.Tk):
 
         if self.current_results:
             self._update_psd_panel_from_index(0)
+            filhos = self.tree.get_children()
+            if filhos:
+                self.tree.selection_set(filhos[0])
+                self.tree.focus(filhos[0])
+                self.tree.see(filhos[0])
+            if hasattr(self, "item_combo") and self.item_combo["values"]:
+                self.item_combo.current(0)
 
+        self.update_idletasks()
         self.status_var.set(f"Precificacao concluida. Total de itens: {len(self.items)}.")
 
     def exportar_excel(self):
