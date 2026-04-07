@@ -494,30 +494,22 @@ class App(tk.Tk):
         wrapper = tk.Frame(self.content, bg="#eceff5")
         wrapper.grid(row=0, column=0, sticky="nsew")
         wrapper.grid_columnconfigure(0, weight=1)
-        wrapper.grid_rowconfigure(1, weight=1)
-        self.build_hero(wrapper, "Entrada manual", "Tela otimizada para exibir todos os campos e manter os botoes principais sempre visiveis.")
+        wrapper.grid_rowconfigure(2, weight=1)
+        self.build_hero(wrapper, "Entrada manual", "Preencha os campos abaixo. O formulario e os botoes principais ficam sempre visiveis na parte superior.")
 
         body = tk.Frame(wrapper, bg="#eceff5")
-        body.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
+        body.grid(row=1, column=0, sticky="ew", pady=(14, 0))
         body.grid_columnconfigure(0, weight=3)
         body.grid_columnconfigure(1, weight=2)
-        body.grid_rowconfigure(0, weight=1)
 
-        # Coluna esquerda com rolagem de seguranca
         left_card = tk.Frame(body, bg="#ffffff", bd=1, relief="solid")
         left_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-        left_card.grid_rowconfigure(1, weight=1)
         left_card.grid_columnconfigure(0, weight=1)
         tk.Label(left_card, text="Formulario", bg="#ffffff", fg="#10243e", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w", padx=22, pady=(18, 10))
 
-        scroller = ScrollableFrame(left_card)
-        scroller.grid(row=1, column=0, sticky="nsew", padx=14)
-        scroller.canvas.configure(bg="#ffffff")
-
-        form = tk.Frame(scroller.inner, bg="#ffffff")
-        form.pack(fill="both", expand=True, padx=8, pady=6)
+        form = tk.Frame(left_card, bg="#ffffff")
+        form.grid(row=1, column=0, sticky="ew", padx=22)
         form.grid_columnconfigure(1, weight=1)
-        form.grid_columnconfigure(3, weight=1)
 
         self.manual_nome = tk.StringVar()
         self.manual_ncm = tk.StringVar()
@@ -528,35 +520,28 @@ class App(tk.Tk):
         self.manual_frete = tk.StringVar(value="FOB")
         self.manual_filial = tk.StringVar(value=f"Natal - {CNPJ_RN}")
 
-        fields = [
-            ("Nome do Produto", self.manual_nome, 0, 0, 1),
-            ("NCM", self.manual_ncm, 1, 0, 1),
-            ("IPI (%)", self.manual_ipi, 2, 0, 1),
-            ("ICMS (%)", self.manual_icms, 3, 0, 1),
-            ("Preco Unitario", self.manual_preco, 4, 0, 1),
-            ("Quantidade", self.manual_qtde, 5, 0, 1),
-        ]
-        for label, var, row, col, span in fields:
-            self._add_entry(form, label, var, row, col, span)
+        self._add_entry(form, "Nome do Produto", self.manual_nome, 0, 0, 1)
+        self._add_entry(form, "NCM", self.manual_ncm, 1, 0, 1)
+        self._add_entry(form, "IPI (%)", self.manual_ipi, 2, 0, 1)
+        self._add_entry(form, "ICMS (%)", self.manual_icms, 3, 0, 1)
+        self._add_entry(form, "Preco Unitario", self.manual_preco, 4, 0, 1)
+        self._add_entry(form, "Quantidade", self.manual_qtde, 5, 0, 1)
 
         tk.Label(form, text="Frete", bg="#ffffff", fg="#16253d", font=("Segoe UI", 11, "bold")).grid(row=6, column=0, sticky="w", pady=(10, 4))
         frete_box = tk.Frame(form, bg="#ffffff")
-        frete_box.grid(row=6, column=1, sticky="w", pady=(10, 4))
-        ttk.Radiobutton(frete_box, text="FOB", variable=self.manual_frete, value="FOB").pack(side="left", padx=(0, 12))
+        frete_box.grid(row=6, column=1, sticky="w", pady=(10, 4), padx=(12, 0))
+        ttk.Radiobutton(frete_box, text="FOB", variable=self.manual_frete, value="FOB").pack(side="left", padx=(0, 16))
         ttk.Radiobutton(frete_box, text="CIF", variable=self.manual_frete, value="CIF").pack(side="left")
 
         tk.Label(form, text="Filial", bg="#ffffff", fg="#16253d", font=("Segoe UI", 11, "bold")).grid(row=7, column=0, sticky="w", pady=(12, 4))
         filial_cb = ttk.Combobox(form, textvariable=self.manual_filial, state="readonly", width=54)
         filial_cb["values"] = [f"Natal - {CNPJ_RN}", f"Pernambuco - {CNPJ_PE}"]
-        filial_cb.grid(row=7, column=1, sticky="ew", pady=(12, 4))
+        filial_cb.grid(row=7, column=1, sticky="ew", pady=(12, 4), padx=(12, 0))
 
-        hints = tk.Frame(form, bg="#ffffff")
-        hints.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(16, 18))
-        hints.grid_columnconfigure(0, weight=1)
-        tk.Label(hints, text="Dica: preenchendo NCM, IPI, ICMS e Preco Unitario, o sistema ja consegue calcular e gerar o item na grade abaixo.", bg="#fff4cc", fg="#5b4a00", font=("Segoe UI", 10), wraplength=760, padx=14, pady=12).grid(row=0, column=0, sticky="ew")
+        tk.Label(left_card, text="Dica: preencha NCM, IPI, ICMS, Preco Unitario e Filial. Depois clique em Confirmar item manual.", bg="#fff4cc", fg="#5b4a00", font=("Segoe UI", 10), wraplength=720, padx=14, pady=12).grid(row=2, column=0, sticky="ew", padx=22, pady=(16, 10))
 
         fixed_actions = tk.Frame(left_card, bg="#ffffff")
-        fixed_actions.grid(row=2, column=0, sticky="ew", padx=22, pady=(8, 18))
+        fixed_actions.grid(row=3, column=0, sticky="ew", padx=22, pady=(0, 18))
         ttk.Button(fixed_actions, text="Limpar campos", style="Ghost.TButton", command=self.limpar_manual).pack(side="left")
         ttk.Button(fixed_actions, text="Confirmar item manual", style="Primary.TButton", command=self.confirmar_manual).pack(side="right")
 
@@ -565,18 +550,28 @@ class App(tk.Tk):
         right_card.grid_columnconfigure(0, weight=1)
         tk.Label(right_card, text="Resumo do modo manual", bg="#ffffff", fg="#10243e", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w", padx=22, pady=(18, 10))
         steps_text = (
-            "1. Digite as informacoes do produto.\n\n"
-            "2. Escolha se o frete e FOB ou CIF.\n\n"
-            f"3. Selecione a filial: Natal ({CNPJ_RN}) ou Pernambuco ({CNPJ_PE}).\n\n"
-            "4. Clique em Confirmar item manual.\n\n"
-            "5. O item sera enviado para a tabela de resultados.\n\n"
+            "1. Digite as informacoes do produto.
+
+"
+            "2. Escolha se o frete e FOB ou CIF.
+
+"
+            f"3. Selecione a filial: Natal ({CNPJ_RN}) ou Pernambuco ({CNPJ_PE}).
+
+"
+            "4. Clique em Confirmar item manual para gerar o item.
+
+"
+            "5. O item sera enviado para a tabela de resultados abaixo.
+
+"
             "6. Exporte para Excel quando desejar."
         )
-        tk.Label(right_card, text=steps_text, justify="left", bg="#eef2ff", fg="#334155", font=("Segoe UI", 11), wraplength=430, padx=18, pady=18).grid(row=1, column=0, sticky="ew", padx=22)
-        tk.Label(right_card, text="Todos os botoes importantes permanecem visiveis no rodape do formulario. A rolagem foi mantida apenas como seguranca para telas menores.", justify="left", bg="#fff7e6", fg="#7c5a00", font=("Segoe UI", 10), wraplength=430, padx=16, pady=14).grid(row=2, column=0, sticky="ew", padx=22, pady=(18, 18))
+        tk.Label(right_card, text=steps_text, justify="left", bg="#eef2ff", fg="#334155", font=("Segoe UI", 11), wraplength=420, padx=18, pady=18).grid(row=1, column=0, sticky="ew", padx=22)
+        tk.Label(right_card, text="Nesta versao, o formulario fica sempre visivel. A grade de resultados permanece abaixo da area de entrada.", justify="left", bg="#fff7e6", fg="#7c5a00", font=("Segoe UI", 10), wraplength=420, padx=16, pady=14).grid(row=2, column=0, sticky="ew", padx=22, pady=(18, 18))
 
         self._build_results_area(wrapper, row=2)
-        self.status_var.set("Modo manual ativo. Todos os campos e o botao principal estao visiveis.")
+        self.status_var.set("Modo manual ativo. Preencha os campos e clique em Confirmar item manual.")
 
     def _add_entry(self, parent, label, variable, row, col, span=1):
         tk.Label(parent, text=label, bg="#ffffff", fg="#16253d", font=("Segoe UI", 11, "bold")).grid(row=row, column=col, sticky="w", pady=(10, 4))
@@ -589,14 +584,13 @@ class App(tk.Tk):
         wrapper = tk.Frame(self.content, bg="#eceff5")
         wrapper.grid(row=0, column=0, sticky="nsew")
         wrapper.grid_columnconfigure(0, weight=1)
-        wrapper.grid_rowconfigure(1, weight=1)
+        wrapper.grid_rowconfigure(2, weight=1)
         self.build_hero(wrapper, "Leitura automatica de orcamento", "Anexe um arquivo e o sistema vai tentar identificar CNPJ, frete, filial e itens automaticamente.")
 
         body = tk.Frame(wrapper, bg="#eceff5")
-        body.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
+        body.grid(row=1, column=0, sticky="ew", pady=(14, 0))
         body.grid_columnconfigure(0, weight=2)
         body.grid_columnconfigure(1, weight=3)
-        body.grid_rowconfigure(0, weight=1)
 
         left_card = tk.Frame(body, bg="#ffffff", bd=1, relief="solid")
         left_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
@@ -622,23 +616,35 @@ class App(tk.Tk):
         right_card.grid_columnconfigure(0, weight=1)
         tk.Label(right_card, text="Como funciona o preenchimento automatico", bg="#ffffff", fg="#10243e", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w", padx=22, pady=(18, 10))
         proc = (
-            "1. Clique em Selecionar arquivo.\n\n"
-            "2. Escolha o orcamento em PDF, Excel, CSV ou imagem.\n\n"
-            "3. O sistema tenta localizar CNPJ da filial, tipo de frete e tabela de itens.\n\n"
-            "4. Cada item identificado e enviado para a grade de resultados.\n\n"
-            "5. Se o arquivo tiver mais de um item, todos sao listados para conferencia.\n\n"
+            "1. Clique em Selecionar arquivo.
+
+"
+            "2. Escolha o orcamento em PDF, Excel, CSV ou imagem.
+
+"
+            "3. O sistema tenta localizar CNPJ da filial, tipo de frete e tabela de itens.
+
+"
+            "4. Cada item identificado e enviado para a grade de resultados abaixo.
+
+"
+            "5. Se o arquivo tiver mais de um item, todos sao listados para conferencia.
+
+"
             "6. Ao final, exporte a planilha em Excel formatado."
         )
         tk.Label(right_card, text=proc, justify="left", bg="#eef2ff", fg="#334155", font=("Segoe UI", 11), wraplength=640, padx=18, pady=18).grid(row=1, column=0, sticky="ew", padx=22)
 
         model = (
-            "Cabecalhos recomendados no arquivo: Produto, NCM, IPI, ICMS, Frete, Preco, Quantidade e Codigo.\n\n"
+            "Cabecalhos recomendados no arquivo: Produto, NCM, IPI, ICMS, Frete, Preco, Quantidade e Codigo.
+
+"
             "Quanto mais estruturado vier o orcamento, melhor a leitura automatica."
         )
         tk.Label(right_card, text=model, justify="left", bg="#fff7e6", fg="#7c5a00", font=("Segoe UI", 10), wraplength=640, padx=16, pady=14).grid(row=2, column=0, sticky="ew", padx=22, pady=(18, 18))
 
         self._build_results_area(wrapper, row=2)
-        self.status_var.set("Modo de anexo ativo. Selecione um arquivo para leitura automatica.")
+        self.status_var.set("Modo de anexo ativo. Clique em Selecionar arquivo para anexar o orcamento.")
 
     def _build_results_area(self, parent, row):
         box = tk.Frame(parent, bg="#ffffff", bd=1, relief="solid")
@@ -648,10 +654,11 @@ class App(tk.Tk):
 
         top = tk.Frame(box, bg="#ffffff")
         top.grid(row=0, column=0, sticky="ew")
-        tk.Label(top, text="Resultados", bg="#ffffff", fg="#10243e", font=("Segoe UI", 16, "bold")).pack(side="left", padx=22, pady=14)
+        top.grid_columnconfigure(1, weight=1)
+        tk.Label(top, text="Resultados", bg="#ffffff", fg="#10243e", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w", padx=22, pady=14)
         self.item_combo_var = tk.StringVar()
-        self.item_combo = ttk.Combobox(top, textvariable=self.item_combo_var, state="readonly", width=90)
-        self.item_combo.pack(side="right", padx=22)
+        self.item_combo = ttk.Combobox(top, textvariable=self.item_combo_var, state="readonly")
+        self.item_combo.grid(row=0, column=1, sticky="e", padx=22)
         self.item_combo.bind("<<ComboboxSelected>>", self.on_item_selected)
 
         table_frame = tk.Frame(box, bg="#ffffff")
@@ -660,13 +667,13 @@ class App(tk.Tk):
         table_frame.grid_rowconfigure(0, weight=1)
 
         cols = ("idx", "codigo", "produto", "qtde", "ncm", "preco", "icms", "ipi", "frete", "r", "s", "t")
-        self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=14)
+        self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=12)
         headers = {
             "idx": "#", "codigo": "Codigo", "produto": "Produto", "qtde": "Qtde", "ncm": "NCM",
             "preco": "Preco Unitario", "icms": "ICMS", "ipi": "IPI", "frete": "Frete",
             "r": "R / Filial 4", "s": "S / Filial 2", "t": "T / Filial 3 e 5",
         }
-        widths = {"idx": 45, "codigo": 90, "produto": 620, "qtde": 60, "ncm": 100, "preco": 115, "icms": 75, "ipi": 75, "frete": 70, "r": 130, "s": 130, "t": 140}
+        widths = {"idx": 45, "codigo": 90, "produto": 500, "qtde": 60, "ncm": 100, "preco": 115, "icms": 75, "ipi": 75, "frete": 70, "r": 130, "s": 130, "t": 140}
         for col in cols:
             self.tree.heading(col, text=headers[col])
             self.tree.column(col, width=widths[col], anchor="center")
@@ -676,7 +683,9 @@ class App(tk.Tk):
         self.tree.tag_configure("normal_row", background="#ffffff")
         yscroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         yscroll.grid(row=0, column=1, sticky="ns")
-        self.tree.configure(yscrollcommand=yscroll.set)
+        xscroll = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
+        xscroll.grid(row=1, column=0, sticky="ew")
+        self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
         self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
 
     def limpar_manual(self):
