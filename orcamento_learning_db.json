@@ -34,9 +34,9 @@
     "oslancessolicitadossaonominaiseestaosujeitosasseguintesvariacoesprevistasnasn__02099861076428": {
       "supplier_name": "Os lances solicitados são nominais e estão sujeitos as seguintes variações previstas nas n",
       "first_seen": "2026-04-07T02:27:08",
-      "successful_reads": 1,
+      "successful_reads": 2,
       "strategies": {
-        "linha_megatron_unica": 1
+        "linha_megatron_unica": 2
       },
       "sample_headers": [
         "Código Qnt Descrição Qnt Unitário Total S Imp ST Ipi Total C Imp",
@@ -57,9 +57,23 @@
         "12005042002400",
         "00210365048640"
       ],
-      "last_seen": "2026-04-07T02:27:08",
+      "last_seen": "2026-04-07T02:44:45",
       "last_strategy": "linha_megatron_unica",
       "last_item_count": 1
+    }
+  },
+  "ncm_memory": {
+    "cabocci50x4pares200mcz": {
+      "description": "CABO CCI 50X4 PARES 200 M CZ",
+      "ncm": "85444900",
+      "uses": 1,
+      "aliases": [
+        "CABO CCI 50X4 PARES 200 M CZ"
+      ],
+      "sources": {
+        "confirmacao_popup": 1
+      },
+      "last_used": "2026-04-07T02:45:31"
     }
   }
 }

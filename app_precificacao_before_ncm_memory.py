@@ -82,7 +82,6 @@ class PricingEngine:
     def __init__(self, workbook_path: str):
         self.ncm_factors = {}
         self.st_rates = {}
-        self.ncm_catalog = []
         self.load_workbook(workbook_path)
 
     def load_workbook(self, workbook_path: str):
@@ -117,101 +116,6 @@ class PricingEngine:
                 continue
             key = str(int(ncm)) if isinstance(ncm, (int, float)) else str(ncm).strip()
             self.st_rates[key] = to_decimal(row[1])
-
-        self._build_workbook_search_index(wb)
-
-    def _build_workbook_search_index(self, wb):
-        self.ncm_catalog = []
-        seen = set()
-        for ws in wb.worksheets:
-            for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
-                values = [v for v in row if v not in (None, "")]
-                if not values:
-                    continue
-
-                ncm_key = ""
-                for value in values:
-                    if isinstance(value, int):
-                        candidate = str(value)
-                    elif isinstance(value, float) and float(value).is_integer():
-                        candidate = str(int(value))
-                    else:
-                        candidate = re.sub(r"\D", "", str(value))
-                    if len(candidate) == 8:
-                        ncm_key = candidate
-                        break
-                if not ncm_key:
-                    continue
-
-                text_parts = []
-                for value in values:
-                    sval = str(value).strip()
-                    if not sval:
-                        continue
-                    if re.fullmatch(r"[\d\.,%-]+", sval):
-                        continue
-                    text_parts.append(sval)
-                searchable = " | ".join(text_parts) or f"NCM {ncm_key}"
-                key = (ncm_key, searchable[:180], ws.title)
-                if key in seen:
-                    continue
-                seen.add(key)
-                self.ncm_catalog.append({
-                    "ncm": ncm_key,
-                    "sheet": ws.title,
-                    "row": row_idx,
-                    "text": searchable[:220],
-                    "normalized_text": normalize_text(searchable),
-                    "tokens": set(re.findall(r"[a-z0-9]+", strip_accents(searchable).lower())),
-                })
-
-    def has_ncm(self, ncm: str) -> bool:
-        return str(ncm).strip() in self.ncm_factors
-
-    def search_ncm_candidates(self, query: str, limit: int = 8):
-        query = str(query or "").strip()
-        if not query:
-            return []
-
-        normalized = normalize_text(query)
-        digits = re.sub(r"\D", "", query)
-        q_tokens = set(re.findall(r"[a-z0-9]+", strip_accents(query).lower()))
-        ranked = []
-
-        if len(digits) == 8 and self.has_ncm(digits):
-            ranked.append({
-                "ncm": digits,
-                "label": f"NCM encontrado diretamente na base",
-                "source": "base_excel",
-                "score": 2000,
-                "details": "Base Dados NCM",
-            })
-
-        for entry in self.ncm_catalog:
-            score = 0
-            if len(digits) == 8 and entry["ncm"] == digits:
-                score += 1800
-            if normalized and normalized in entry.get("normalized_text", ""):
-                score += 400
-            overlap = len(q_tokens & entry.get("tokens", set()))
-            if overlap:
-                score += overlap * 60
-            if score <= 0:
-                continue
-            ranked.append({
-                "ncm": entry["ncm"],
-                "label": f"Base Excel: {entry['text']}",
-                "source": "base_excel",
-                "score": score,
-                "details": f"{entry['sheet']} linha {entry['row']}",
-            })
-
-        dedup = {}
-        for item in ranked:
-            prev = dedup.get(item["ncm"])
-            if not prev or item["score"] > prev["score"]:
-                dedup[item["ncm"]] = item
-        return sorted(dedup.values(), key=lambda x: (-x["score"], x["ncm"]))[:limit]
 
     def calcular(
         self,
@@ -276,17 +180,16 @@ class UniversalBudgetReader:
 
     def _load_learning_db(self):
         if not os.path.exists(self.learning_db_path):
-            return {"profiles": {}, "ncm_memory": {}}
+            return {"profiles": {}}
         try:
             with open(self.learning_db_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if not isinstance(data, dict):
-                return {"profiles": {}, "ncm_memory": {}}
+                return {"profiles": {}}
             data.setdefault("profiles", {})
-            data.setdefault("ncm_memory", {})
             return data
         except Exception:
-            return {"profiles": {}, "ncm_memory": {}}
+            return {"profiles": {}}
 
     def _save_learning_db(self):
         try:
@@ -380,93 +283,6 @@ class UniversalBudgetReader:
         for _, profile in sorted(profiles.items(), key=lambda kv: kv[1].get("last_seen", ""), reverse=True)[:20]:
             linhas.append(f"- {profile.get('supplier_name', 'layout')} | leituras: {profile.get('successful_reads', 0)} | última estratégia: {profile.get('last_strategy', '-')}")
         return "\n".join(linhas)
-
-
-    def _normalize_product_key(self, description: str):
-        return normalize_text(description)[:180]
-
-    def _tokenize_description(self, description: str):
-        return set(re.findall(r"[a-z0-9]+", strip_accents(str(description)).lower()))
-
-    def remember_ncm(self, description: str, ncm: str, source: str = "manual"):
-        description = str(description or "").strip()
-        ncm = re.sub(r"\D", "", str(ncm or ""))
-        if not description or len(ncm) != 8:
-            return
-        key = self._normalize_product_key(description)
-        memory = self.learning_db.setdefault("ncm_memory", {})
-        entry = memory.get(key, {
-            "description": description[:180],
-            "ncm": ncm,
-            "uses": 0,
-            "aliases": [],
-            "sources": {},
-        })
-        entry["description"] = entry.get("description") or description[:180]
-        entry["ncm"] = ncm
-        entry["uses"] = int(entry.get("uses", 0)) + 1
-        entry["last_used"] = datetime.now().isoformat(timespec="seconds")
-        aliases = list(dict.fromkeys((entry.get("aliases", []) + [description[:180]])))[:10]
-        entry["aliases"] = aliases
-        entry.setdefault("sources", {})
-        entry["sources"][source] = int(entry["sources"].get(source, 0)) + 1
-        memory[key] = entry
-        self.learning_db["ncm_memory"] = memory
-        self._save_learning_db()
-
-    def suggest_ncm(self, description: str, engine=None, limit: int = 8):
-        description = str(description or "").strip()
-        if not description:
-            return []
-
-        key = self._normalize_product_key(description)
-        q_tokens = self._tokenize_description(description)
-        ranked = []
-
-        memory = self.learning_db.get("ncm_memory", {})
-        exact = memory.get(key)
-        if exact:
-            ranked.append({
-                "ncm": exact.get("ncm", ""),
-                "label": f"Histórico exato: {exact.get('description', description)} ({exact.get('uses', 0)}x)",
-                "source": "memoria_exata",
-                "score": 1000 + min(int(exact.get("uses", 0)), 50),
-                "details": "memória local",
-            })
-
-        for mem_key, entry in memory.items():
-            if mem_key == key:
-                continue
-            text_base = " ".join([entry.get("description", "")] + entry.get("aliases", []))
-            entry_tokens = self._tokenize_description(text_base)
-            overlap = len(q_tokens & entry_tokens)
-            if overlap <= 0:
-                continue
-            score = 220 + overlap * 55 + min(int(entry.get("uses", 0)), 20) * 4
-            ranked.append({
-                "ncm": entry.get("ncm", ""),
-                "label": f"Histórico parecido: {entry.get('description', '')}",
-                "source": "memoria_historico",
-                "score": score,
-                "details": f"{entry.get('uses', 0)} utilização(ões) anteriores",
-            })
-
-        if engine is not None:
-            for candidate in engine.search_ncm_candidates(description, limit=limit * 2):
-                ranked.append(candidate)
-
-        dedup = {}
-        for item in ranked:
-            ncm = re.sub(r"\D", "", str(item.get("ncm", "")))
-            if len(ncm) != 8:
-                continue
-            prev = dedup.get(ncm)
-            if not prev or item.get("score", 0) > prev.get("score", 0):
-                new_item = dict(item)
-                new_item["ncm"] = ncm
-                dedup[ncm] = new_item
-
-        return sorted(dedup.values(), key=lambda x: (-x.get("score", 0), x.get("ncm", "")))[:limit]
 
     def read(self, filepath: str, learning_enabled: bool = True):
         self.reset_diagnostics()
@@ -624,18 +440,6 @@ class UniversalBudgetReader:
         if not profile:
             return
         self._log(f"Perfil aprendido carregado para '{profile.get('supplier_name', profile_key)}'.")
-
-
-    def _looks_like_product_description(self, text: str):
-        raw = str(text or "").strip()
-        if len(raw) < 4:
-            return False
-        upper = strip_accents(raw).upper()
-        blocked = ["TOTAL", "ICMS", "IPI", "FATURAMENTO", "ORCAMENTO", "CLIENTE", "ENDERECO", "TRANSPOR", "PRAZO", "VALIDADE", "IMPOSTOS"]
-        if any(term in upper for term in blocked):
-            return False
-        tokens = re.findall(r"[A-Z0-9]+", upper)
-        return len(tokens) >= 2
 
     def _dedupe_items(self, items):
         deduped = []
@@ -1774,13 +1578,8 @@ class App(tk.Tk):
             self.detect_cnpj_var.set(f"CNPJ: {CNPJ_RN if compra_detectada == 'RN' else CNPJ_PE}")
 
             self._populate_combo_labels()
-            if self._validar_ncm_antes_calculo():
-                self._populate_combo_labels()
-                self.calcular_orcamento_inteiro()
-                self._mostrar_popup_resumo_tabela("Resumo da simulacao do orcamento")
-            else:
-                self.status_var.set("Processamento interrompido. Corrija ou confirme os NCMs pendentes.")
-                return
+            self.calcular_orcamento_inteiro()
+            self._mostrar_popup_resumo_tabela("Resumo da simulacao do orcamento")
 
             self.status_var.set(f"Arquivo processado com sucesso. Itens encontrados: {len(self.items)}.")
 
@@ -1796,150 +1595,6 @@ class App(tk.Tk):
             self.item_combo["values"] = labels
             if labels:
                 self.item_combo.current(0)
-
-
-    def _extract_ncm_from_selection(self, value: str):
-        value = str(value or "").strip()
-        m = re.match(r"^(\d{8})\b", value)
-        if m:
-            return m.group(1)
-        digits = re.sub(r"\D", "", value)
-        return digits[:8] if len(digits) >= 8 else digits
-
-    def _validar_ncm_antes_calculo(self):
-        itens_para_corrigir = []
-        auto_preenchidos = 0
-
-        for item in self.items:
-            item["ncm"] = re.sub(r"\D", "", str(item.get("ncm", "")))
-            current_ncm = item.get("ncm", "")
-            sugestoes = self.reader.suggest_ncm(item.get("descricao", ""), engine=self.engine, limit=8)
-
-            if current_ncm and self.engine.has_ncm(current_ncm):
-                self.reader.remember_ncm(item.get("descricao", ""), current_ncm, source="leitura_automatica")
-                continue
-
-            if (not current_ncm) and sugestoes:
-                top = sugestoes[0]
-                if top.get("source") == "memoria_exata" and self.engine.has_ncm(top.get("ncm", "")):
-                    item["ncm"] = top["ncm"]
-                    auto_preenchidos += 1
-                    self.reader._log(f"NCM preenchido automaticamente pela memória para '{item.get('descricao', '')[:80]}': {top['ncm']}")
-                    continue
-
-            item["_ncm_sugestoes"] = sugestoes
-            itens_para_corrigir.append(item)
-
-        if auto_preenchidos:
-            self.status_var.set(f"{auto_preenchidos} item(ns) tiveram NCM preenchido automaticamente pela memória.")
-
-        if not itens_para_corrigir:
-            return True
-
-        return self._abrir_popup_correcao_ncm(itens_para_corrigir)
-
-    def _abrir_popup_correcao_ncm(self, itens_para_corrigir):
-        popup = tk.Toplevel(self)
-        popup.title("Correção de NCM antes do cálculo")
-        popup.geometry("1180x620")
-        popup.minsize(980, 480)
-        popup.configure(bg="#f4f6fb")
-        popup.transient(self)
-        popup.grab_set()
-        popup.result = False
-
-        header = tk.Frame(popup, bg="#6f2dbd", height=72)
-        header.pack(fill="x")
-        header.pack_propagate(False)
-        tk.Label(
-            header,
-            text="NCM pendente - memória, histórico e base Excel",
-            bg="#6f2dbd",
-            fg="white",
-            font=("Segoe UI", 16, "bold"),
-        ).pack(side="left", padx=20, pady=18)
-
-        tk.Label(
-            popup,
-            text="Os campos abaixo já trazem sugestões automáticas com base no histórico local e na base Excel.",
-            bg="#eef2ff",
-            fg="#334155",
-            font=("Segoe UI", 10),
-            padx=12,
-            pady=10,
-            justify="left",
-            anchor="w",
-        ).pack(fill="x", padx=16, pady=(12, 8))
-
-        outer = tk.Frame(popup, bg="#f4f6fb")
-        outer.pack(fill="both", expand=True, padx=16, pady=(0, 12))
-
-        canvas = tk.Canvas(outer, bg="#f4f6fb", highlightthickness=0)
-        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
-        inner = tk.Frame(canvas, bg="#f4f6fb")
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=inner, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        rows = []
-        for idx, item in enumerate(itens_para_corrigir, start=1):
-            sugestoes = item.get("_ncm_sugestoes", [])
-            card = tk.Frame(inner, bg="#ffffff", bd=1, relief="solid")
-            card.pack(fill="x", pady=(0, 10))
-            card.grid_columnconfigure(0, weight=1)
-
-            descricao = item.get("descricao", "(sem descrição)")
-            atual = item.get("ncm", "")
-            status = "NCM ausente no orçamento." if not atual else f"NCM atual '{atual}' não foi encontrado na base Excel."
-
-            tk.Label(card, text=f"{idx}. {descricao}", bg="#ffffff", fg="#10243e", font=("Segoe UI", 11, "bold"), anchor="w", justify="left", wraplength=960).grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 4))
-            tk.Label(card, text=status, bg="#ffffff", fg="#64748b", font=("Segoe UI", 9), anchor="w").grid(row=1, column=0, sticky="w", padx=14)
-
-            combo_values = []
-            for sug in sugestoes:
-                detalhes = sug.get("details", "")
-                label = f"{sug['ncm']} | {sug.get('label', sug.get('source', 'Sugestão'))}"
-                if detalhes:
-                    label += f" | {detalhes}"
-                combo_values.append(label[:220])
-
-            default_value = combo_values[0] if combo_values else atual
-            var = tk.StringVar(value=default_value)
-            ttk.Combobox(card, textvariable=var, values=combo_values, width=130).grid(row=2, column=0, sticky="ew", padx=14, pady=(8, 6))
-
-            top_sources = ", ".join([f"{s.get('ncm')} ({s.get('source')})" for s in sugestoes[:3]]) if sugestoes else "Sem sugestão automática. Digite o NCM manualmente."
-            tk.Label(card, text=top_sources, bg="#fff7e6", fg="#7c5a00", font=("Segoe UI", 9), anchor="w", justify="left", wraplength=960, padx=10, pady=8).grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 12))
-
-            rows.append((item, var))
-
-        footer = tk.Frame(popup, bg="#f4f6fb")
-        footer.pack(fill="x", padx=16, pady=(0, 16))
-
-        def confirmar():
-            for item, var in rows:
-                ncm = self._extract_ncm_from_selection(var.get())
-                if len(ncm) != 8:
-                    messagebox.showerror(APP_TITLE, f"Informe um NCM válido de 8 dígitos para: {item.get('descricao', '')[:80]}", parent=popup)
-                    return
-                if not self.engine.has_ncm(ncm):
-                    messagebox.showerror(APP_TITLE, f"O NCM {ncm} não foi encontrado na base Excel. Escolha um NCM existente para: {item.get('descricao', '')[:80]}", parent=popup)
-                    return
-                item["ncm"] = ncm
-                self.reader.remember_ncm(item.get("descricao", ""), ncm, source="confirmacao_popup")
-            popup.result = True
-            popup.destroy()
-
-        def cancelar():
-            popup.result = False
-            popup.destroy()
-
-        ttk.Button(footer, text="Cancelar", style="Ghost.TButton", command=cancelar).pack(side="right")
-        ttk.Button(footer, text="Confirmar e calcular", style="Primary.TButton", command=confirmar).pack(side="right", padx=(0, 8))
-
-        self.wait_window(popup)
-        return bool(getattr(popup, "result", False))
 
     def on_item_selected(self, event=None):
         idx = self.item_combo.current()
